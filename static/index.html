@@ -434,8 +434,21 @@
             <p>快速部署和管理你的 Web 应用</p>
         </div>
 
+        <!-- 错误提示 -->
+        <div v-if="errorMessage && !loading" class="init-card">
+            <div class="alert alert-warning">
+                <strong>⚠️ 配置错误</strong><br>
+                {{ errorMessage }}
+            </div>
+            <div v-if="!workerConfigured" style="margin-top: 1rem;">
+                <p style="color: var(--text-secondary); font-size: 0.875rem;">
+                    请在插件配置中设置 <code style="background: rgba(0,0,0,0.1); padding: 0.125rem 0.375rem; border-radius: 3px;">WORKER_URL</code> 参数
+                </p>
+            </div>
+        </div>
+
         <!-- 首次初始化 -->
-        <div v-if="!systemInitialized && !loading" class="init-card">
+        <div v-if="!systemInitialized && !loading && !errorMessage" class="init-card">
             <div class="init-title">🔐 首次设置</div>
             <div class="init-description">
                 欢迎！请设置管理员密钥来开始使用系统
@@ -798,7 +811,8 @@
                     loading: true,
                     systemInitialized: false,
                     adminKey: localStorage.getItem('adminKey') || '',
-                    workerUrl: '',
+                    proxyBaseUrl: '/plugins/KroMiose.nekro_plugin_webapp/proxy',
+                    workerUrl: '',  // 实际的 Worker URL，用于直接访问页面
                     initAdminKey: '',
                     loginAdminKey: '',
                     stats: { pages_count: 0, keys_count: 0, total_access: 0 },
@@ -814,6 +828,8 @@
                     settings: { page_expire_days: 30, max_html_size: 500 },
                     showSettingsModal: false,
                     tempSettings: { page_expire_days: 30, max_html_size: 500 },
+                    errorMessage: '',
+                    workerConfigured: false,
                 };
             },
             async mounted() {
@@ -822,28 +838,40 @@
             methods: {
                 async checkSystemStatus() {
                     this.loading = true;
+                    this.errorMessage = '';
                     try {
-                        // 第一步：从插件后端获取 Worker URL
-                        const pluginHealthResponse = await fetch('/plugins/KroMiose.nekro_plugin_webapp/health');
-                        if (!pluginHealthResponse.ok) {
-                            console.error('无法获取插件配置');
-                            return;
+                        // 检查插件和 Worker 配置状态
+                        const healthResponse = await fetch('/plugins/KroMiose.nekro_plugin_webapp/health');
+                        if (!healthResponse.ok) {
+                            throw new Error('无法连接到插件后端');
                         }
                         
-                        const pluginHealthData = await pluginHealthResponse.json();
-                        // 规范化 Worker URL：移除尾部斜杠
-                        this.workerUrl = (pluginHealthData.worker_url || '').replace(/\/+$/, '');
+                        const healthData = await healthResponse.json();
+                        this.workerConfigured = healthData.worker_configured || false;
                         
-                        if (!this.workerUrl) {
-                            console.error('Worker URL 未配置');
+                        if (!this.workerConfigured) {
+                            this.errorMessage = 'Worker URL 未配置，请先在插件配置中设置 WORKER_URL';
                             return;
                         }
 
-                        // 第二步：直接访问 Worker 检查是否已初始化
-                        const workerHealthResponse = await fetch(`${this.workerUrl}/api/health`);
-                        if (workerHealthResponse.ok) {
-                            const workerHealthData = await workerHealthResponse.json();
-                            this.systemInitialized = workerHealthData.initialized || false;
+                        // 保存 Worker URL（用于直接访问页面）
+                        this.workerUrl = healthData.worker_url || '';
+
+                        if (healthData.worker_status === 'error') {
+                            this.errorMessage = `Worker 连接失败: ${healthData.worker_error || '未知错误'}`;
+                            return;
+                        }
+
+                        // 检查 Worker 是否已初始化
+                        if (healthData.worker_initialized !== undefined) {
+                            this.systemInitialized = healthData.worker_initialized;
+                        } else {
+                            // 兼容：通过代理检查初始化状态
+                            const workerHealthResponse = await fetch(`${this.proxyBaseUrl}/api/health`);
+                            if (workerHealthResponse.ok) {
+                                const workerHealthData = await workerHealthResponse.json();
+                                this.systemInitialized = workerHealthData.initialized || false;
+                            }
                         }
 
                         // 如果已初始化且有密钥，加载数据
@@ -852,6 +880,7 @@
                         }
                     } catch (error) {
                         console.error('检查系统状态失败:', error);
+                        this.errorMessage = `系统初始化失败: ${error.message}`;
                     } finally {
                         this.loading = false;
                     }
@@ -863,7 +892,7 @@
                     }
 
                     try {
-                        const response = await fetch(`${this.workerUrl}/api/init`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/api/init`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ admin_key: this.initAdminKey })
@@ -878,7 +907,7 @@
                             await this.loadAll();
                         } else {
                             const error = await response.json();
-                            alert('初始化失败：' + (error.error || '未知错误'));
+                            alert('初始化失败：' + (error.error || error.detail || '未知错误'));
                         }
                     } catch (error) {
                         console.error('初始化失败:', error);
@@ -886,17 +915,32 @@
                     }
                 },
                 async login() {
-                    this.adminKey = this.loginAdminKey;
-                    localStorage.setItem('adminKey', this.adminKey);
-                    
-                    // 尝试加载数据验证密钥
+                    if (!this.loginAdminKey.trim()) {
+                        alert('请输入管理密钥');
+                        return;
+                    }
+
+                    // 先验证密钥是否正确（不保存到状态）
                     try {
-                        await this.loadStats();
-                        this.loginAdminKey = '';
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/stats`, {
+                            headers: { Authorization: `Bearer ${this.loginAdminKey}` }
+                        });
+                        
+                        if (response.ok) {
+                            // 验证成功，保存密钥并加载所有数据
+                            this.adminKey = this.loginAdminKey;
+                            localStorage.setItem('adminKey', this.adminKey);
+                            this.loginAdminKey = '';
+                            await this.loadAll();
+                        } else if (response.status === 401) {
+                            alert('登录失败：管理密钥不正确');
+                        } else {
+                            const error = await response.json().catch(() => ({}));
+                            alert('登录失败：' + (error.detail || error.error || `HTTP ${response.status}`));
+                        }
                     } catch (error) {
-                        alert('登录失败，请检查密钥是否正确');
-                        this.adminKey = '';
-                        localStorage.removeItem('adminKey');
+                        console.error('登录失败:', error);
+                        alert('登录失败：' + error.message);
                     }
                 },
                 logout() {
@@ -908,6 +952,15 @@
                         this.pages = [];
                     }
                 },
+                handleUnauthorized() {
+                    // 处理 401 未授权错误：清除密钥并提示用户
+                    this.adminKey = '';
+                    localStorage.removeItem('adminKey');
+                    this.stats = { pages_count: 0, keys_count: 0, total_access: 0 };
+                    this.keys = [];
+                    this.pages = [];
+                    alert('会话已过期或密钥无效，请重新登录');
+                },
                 async loadAll() {
                     await Promise.all([
                         this.loadStats(),
@@ -917,16 +970,20 @@
                     ]);
                 },
                 async loadStats() {
-                    if (!this.workerUrl || !this.adminKey) {
+                    if (!this.proxyBaseUrl || !this.adminKey) {
                         this.stats = { pages_count: 0, keys_count: 0, total_access: 0 };
                         return;
                     }
                     try {
-                        const response = await fetch(`${this.workerUrl}/admin/stats`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/stats`, {
                             headers: { Authorization: `Bearer ${this.adminKey}` }
                         });
                         if (response.ok) {
                             this.stats = await response.json();
+                        } else if (response.status === 401) {
+                            // 密钥无效，自动退出登录
+                            console.error('密钥验证失败，自动退出登录');
+                            this.handleUnauthorized();
                         } else {
                             console.error('加载统计失败:', response.status);
                             this.stats = { pages_count: 0, keys_count: 0, total_access: 0 };
@@ -937,17 +994,20 @@
                     }
                 },
                 async loadKeys() {
-                    if (!this.workerUrl || !this.adminKey) {
+                    if (!this.proxyBaseUrl || !this.adminKey) {
                         this.keys = [];
                         return;
                     }
                     this.loadingKeys = true;
                     try {
-                        const response = await fetch(`${this.workerUrl}/admin/keys`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/keys`, {
                             headers: { Authorization: `Bearer ${this.adminKey}` }
                         });
                         if (response.ok) {
                             this.keys = await response.json();
+                        } else if (response.status === 401) {
+                            console.error('密钥验证失败，自动退出登录');
+                            this.handleUnauthorized();
                         } else {
                             console.error('加载密钥失败:', response.status);
                             this.keys = [];
@@ -960,17 +1020,20 @@
                     }
                 },
                 async loadPages() {
-                    if (!this.workerUrl || !this.adminKey) {
+                    if (!this.proxyBaseUrl || !this.adminKey) {
                         this.pages = [];
                         return;
                     }
                     this.loadingPages = true;
                     try {
-                        const response = await fetch(`${this.workerUrl}/admin/pages`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/pages`, {
                             headers: { Authorization: `Bearer ${this.adminKey}` }
                         });
                         if (response.ok) {
                             this.pages = await response.json();
+                        } else if (response.status === 401) {
+                            console.error('密钥验证失败，自动退出登录');
+                            this.handleUnauthorized();
                         } else {
                             console.error('加载页面失败:', response.status);
                             this.pages = [];
@@ -986,7 +1049,7 @@
                     if (!this.newKeyName.trim()) return;
                     
                     try {
-                        const response = await fetch(`${this.workerUrl}/admin/keys`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/keys`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -1002,7 +1065,7 @@
                             await this.loadAll();
                         } else {
                             const error = await response.json();
-                            alert('创建失败：' + (error.error || '未知错误'));
+                            alert('创建失败：' + (error.error || error.detail || '未知错误'));
                         }
                     } catch (error) {
                         console.error('创建密钥失败:', error);
@@ -1013,7 +1076,7 @@
                     if (!confirm('确定要删除这个密钥吗？')) return;
 
                     try {
-                        const response = await fetch(`${this.workerUrl}/admin/keys/${keyId}`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/keys/${keyId}`, {
                             method: 'DELETE',
                             headers: { Authorization: `Bearer ${this.adminKey}` }
                         });
@@ -1033,7 +1096,7 @@
                     if (!confirm('确定要删除这个页面吗？')) return;
 
                     try {
-                        const response = await fetch(`${this.workerUrl}/admin/pages/${pageId}`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/pages/${pageId}`, {
                             method: 'DELETE',
                             headers: { Authorization: `Bearer ${this.adminKey}` }
                         });
@@ -1053,7 +1116,7 @@
                     if (!this.oldPassword || this.newPassword.length < 8) return;
 
                     try {
-                        const response = await fetch(`${this.workerUrl}/admin/password`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/password`, {
                             method: 'PUT',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -1072,7 +1135,7 @@
                             this.closeChangePasswordModal();
                         } else {
                             const error = await response.json();
-                            alert('修改失败：' + (error.error || '未知错误'));
+                            alert('修改失败：' + (error.error || error.detail || '未知错误'));
                         }
                     } catch (error) {
                         console.error('修改密钥失败:', error);
@@ -1085,9 +1148,9 @@
                     this.newPassword = '';
                 },
                 async loadSettings() {
-                    if (!this.workerUrl || !this.adminKey) return;
+                    if (!this.proxyBaseUrl || !this.adminKey) return;
                     try {
-                        const response = await fetch(`${this.workerUrl}/admin/settings`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/settings`, {
                             headers: { Authorization: `Bearer ${this.adminKey}` }
                         });
                         if (response.ok) {
@@ -1106,7 +1169,7 @@
                 },
                 async saveSettings() {
                     try {
-                        const response = await fetch(`${this.workerUrl}/admin/settings`, {
+                        const response = await fetch(`${this.proxyBaseUrl}/admin/settings`, {
                             method: 'PUT',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -1121,7 +1184,7 @@
                             this.closeSettingsModal();
                         } else {
                             const error = await response.json();
-                            alert('保存失败：' + (error.error || '未知错误'));
+                            alert('保存失败：' + (error.error || error.detail || '未知错误'));
                         }
                     } catch (error) {
                         console.error('保存配置失败:', error);
@@ -1137,7 +1200,12 @@
                     });
                 },
                 openPage(pageId) {
-                    window.open(`${this.workerUrl}/${pageId}`, '_blank');
+                    // 直接访问 Worker 上的页面（不走代理）
+                    if (!this.workerUrl) {
+                        alert('Worker URL 未配置');
+                        return;
+                    }
+                    window.open(`${this.workerUrl.replace(/\/+$/, '')}/${pageId}`, '_blank');
                 },
                 formatDate(timestamp) {
                     const date = new Date(timestamp);

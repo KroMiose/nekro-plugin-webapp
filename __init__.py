@@ -112,6 +112,38 @@ async def create_web_app(
         raise Exception(f"部署出错: {error_msg}") from e
 
 
+@plugin.mount_prompt_inject_method("webapp_base64_guide")
+async def inject_base64_guide(_ctx: AgentCtx) -> str:
+    """注入 Base64 图片使用指南（仅在启用时）"""
+    # 只有启用 Base64 图片功能时才注入提示词
+    if not config.ENABLE_BASE64_IMAGES:
+        return ""
+
+    return """
+## HTML 中嵌入 Base64 图片指南
+
+你可以在创建的 HTML 网页中使用 Base64 编码或外部链接(非跨域限制来源)直接嵌入图片。
+
+**使用格式：**
+```html
+<img src="data:image/png;base64,iVBORw0KGgo..." alt="描述">
+<img src="data:image/jpeg;base64,/9j/4AAQSkZ..." alt="描述">
+<img src="data:image/svg+xml;base64,PHN2Zy..." alt="描述">
+```
+
+**支持格式：** PNG、JPEG、GIF、SVG、WebP
+
+**最佳实践：**
+- ✅ 小图标、Logo（< 50KB）
+- ✅ SVG 矢量图
+- ✅ 按钮、装饰图
+- ❌ 大照片（> 300KB）
+- ❌ 多张高清图
+
+**注意：** Base64 会使图片体积增大约 33%，建议单个图片不超过 300KB。大图片请使用外部链接。
+""".strip()
+
+
 @plugin.mount_cleanup_method()
 async def clean_up() -> None:
     """清理插件资源"""
