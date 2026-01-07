@@ -1,14 +1,105 @@
 # WebApp 快速部署插件
 
-> 通过 Cloudflare Workers 将 HTML 内容快速部署为在线可访问的网页
+> 通过 Cloudflare Workers 将 HTML 内容快速部署为在线可访问的网页，支持多 Agent 异步协作开发
 
 ## ✨ 功能特性
 
-- 🚀 **AI 一键部署**：AI 自动将生成的 HTML 部署为在线网页
-- 🔑 **权限分离设计**：管理密钥管理系统，访问密钥创建页面
-- 🌐 **全球加速**：基于 Cloudflare Workers，享受全球 CDN 加速
-- 📊 **可视化管理**：简洁的 Web 管理界面，轻松管理页面和密钥
-- ♾️ **灵活配置**：支持自定义过期时间、大小限制等
+### 🤖 多 Agent 异步协作 (v2.0 新功能)
+
+- **独立子 Agent**：创建专门的网页开发 Agent 异步工作，主 Agent 只负责需求和反馈
+- **智能难度评估**：自动评估任务难度 (1-10)，复杂任务自动使用高级模型
+- **实时状态感知**：主 Agent 通过提示词注入实时查看子 Agent 工作进度
+- **双向通信**：主 Agent 和子 Agent 可以相互发送消息、询问和反馈
+- **会话隔离**：每个会话的 Agent 互相独立，互不干扰
+
+### 🚀 核心功能
+
+- **AI 一键部署**：AI 自动将生成的 HTML 部署为在线网页
+- **全球加速**：基于 Cloudflare Workers，享受全球 CDN 加速
+- **可视化管理**：简洁的 Web 管理界面，轻松管理页面和密钥
+- **权限分离设计**：管理密钥和访问密钥分离，安全可控
+
+---
+
+## 🎯 使用方法
+
+### 多 Agent 协作模式 (推荐)
+
+当用户需要创建网页时，AI 会自动创建一个专门的网页开发 Agent：
+
+```
+用户：帮我创建一个个人简历页面，要求现代简约风格，深色主题
+
+AI：✅ 网页开发 Agent [WEB-a3f8] 已创建并开始工作
+📝 任务需求: 帮我创建一个个人简历页面，要求现代简约风格，深色主题
+📊 难度评估: 🟡 中等 (5/10)
+
+Agent 正在分析需求并开始开发...
+```
+
+子 Agent 完成后会通知主 Agent：
+
+```
+[系统] ✅ [WebDev Agent WEB-a3f8] (成果)
+网页已部署完成！
+预览链接: https://your-worker.pages.dev/abc12345
+
+如需修改，请使用 send_to_webapp_agent("WEB-a3f8", "修改意见") 发送反馈。
+```
+
+### AI 可用操作
+
+| 方法                                                | 说明                   |
+| --------------------------------------------------- | ---------------------- |
+| `create_webapp_agent(requirement, difficulty)`      | 创建网页开发 Agent     |
+| `send_to_webapp_agent(agent_id, message, msg_type)` | 向 Agent 发送消息/反馈 |
+| `confirm_webapp_agent(agent_id)`                    | 确认任务完成           |
+| `cancel_webapp_agent(agent_id, reason)`             | 取消 Agent             |
+| `get_webapp_preview(agent_id)`                      | 获取预览链接           |
+| `list_webapp_agents()`                              | 列出活跃 Agent         |
+
+### 管理员命令
+
+| 命令                 | 说明                     |
+| -------------------- | ------------------------ |
+| `webapp-list`        | 列出当前会话活跃的 Agent |
+| `webapp-info <ID>`   | 查看 Agent 详细信息      |
+| `webapp-stats`       | 查看会话统计             |
+| `webapp-cancel <ID>` | 取消指定 Agent           |
+| `webapp-history`     | 查看历史任务             |
+| `webapp-clean`       | 清理已完成记录           |
+| `webapp-help`        | 显示帮助                 |
+
+---
+
+## ⚙️ 配置说明
+
+### 基础配置
+
+| 配置项                 | 说明                 | 必填 |
+| ---------------------- | -------------------- | ---- |
+| `WORKER_URL`           | Worker 访问地址      | ✅   |
+| `ACCESS_KEY`           | 访问密钥（创建页面） | ✅   |
+| `ENABLE_BASE64_IMAGES` | 允许 Base64 图片嵌入 | ❌   |
+
+### 模型配置 (v2.0)
+
+| 配置项                 | 说明                       | 默认值  |
+| ---------------------- | -------------------------- | ------- |
+| `WEBDEV_MODEL_GROUP`   | 标准开发模型组             | default |
+| `ADVANCED_MODEL_GROUP` | 高级开发模型组（复杂任务） | 空      |
+| `DIFFICULTY_THRESHOLD` | 使用高级模型的难度阈值     | 7       |
+
+**说明**：当任务难度评分 ≥ 阈值时，将使用高级模型处理。
+
+### 并发控制
+
+| 配置项                           | 说明                    | 默认值 |
+| -------------------------------- | ----------------------- | ------ |
+| `MAX_CONCURRENT_AGENTS_PER_CHAT` | 单会话最大并发 Agent 数 | 3      |
+| `MAX_COMPLETED_HISTORY`          | 保留的历史任务数        | 10     |
+| `MAX_ITERATIONS`                 | 单 Agent 最大迭代次数   | 10     |
+| `AGENT_TIMEOUT_MINUTES`          | Agent 超时时间（分钟）  | 30     |
 
 ---
 
@@ -20,97 +111,49 @@
 
 👉 **[部署文档（DEPLOYMENT.md）](https://github.com/KroMiose/nekro-plugin-webapp/blob/main/DEPLOYMENT.md)**
 
-部署完成后，你将获得：
-
-- ✅ Worker URL（如：`https://your-worker.pages.dev`）
-- ✅ 管理密钥（用于管理界面登录）
-
 ### 第二步：配置插件
 
 1. 打开 NekroAgent 插件配置页面
 2. 找到 **WebApp 快速部署** 插件
-3. 填写 **Worker URL**：你的 Worker 地址
-4. 保存配置
+3. 填写基础配置：
+   - **Worker URL**：你的 Worker 地址
+   - **ACCESS_KEY**：访问密钥
+4. （可选）配置高级模型：
+   - **ADVANCED_MODEL_GROUP**：高级模型组名称
+   - **DIFFICULTY_THRESHOLD**：难度阈值
+5. 保存配置
 
 ### 第三步：创建访问密钥
 
 1. 访问管理界面：[点击跳转](/plugins/KroMiose.nekro_plugin_webapp/)
-2. 使用管理密钥登录或创建管理密钥(仅首次访问时需要创建)
-3. 在"密钥管理"中点击"创建访问密钥"
-4. 输入密钥名称（如：`nekro-agent-access`）
-5. 复制生成的访问密钥
+2. 使用管理密钥登录
+3. 在"密钥管理"中创建访问密钥
+4. 将访问密钥填入插件配置
 
-### 第四步：配置访问密钥
-
-回到插件配置页面，填写 **ACCESS_KEY**（刚才创建的访问密钥），保存配置。
-
-✅ **配置完成**！现在 AI 可以自动部署网页了。
+✅ **配置完成**！
 
 ---
 
-## 🎯 使用方法
+## 📊 难度评估说明
 
-### AI 自动调用
+插件会根据需求描述自动评估任务难度：
 
-AI 会自动调用插件部署网页，你只需要描述需求：
+| 难度 | 等级    | 描述                 | 示例             |
+| ---- | ------- | -------------------- | ---------------- |
+| 1-3  | 🟢 简单 | 静态展示页、简单介绍 | 公告页、名片页   |
+| 4-6  | 🟡 中等 | 响应式布局、基础交互 | 简历页、产品介绍 |
+| 7-10 | 🔴 困难 | 复杂动画、数据可视化 | 游戏、数据大屏   |
 
-**示例 1：创建简单网页**
+**自动评估因素**：
 
+- 需求长度和复杂度
+- 关键词检测（动画、交互、3D、游戏等）
+
+**手动指定**：
+
+```python
+create_webapp_agent("创建一个实时数据大屏", difficulty=8)
 ```
-用户：帮我创建一个显示当前时间的网页
-
-AI：我来创建一个显示实时时间的网页...
-已部署：https://your-worker.pages.dev/abc12345
-```
-
-**示例 2：创建交互式工具**
-
-```
-用户：做个计算器网页
-
-AI：我来创建一个功能完整的计算器...
-已部署：https://your-worker.pages.dev/xyz67890
-```
-
-**示例 3：创建多页面网站**
-
-```
-用户：帮我创建一个简单的个人网站，包含首页、关于和联系页面
-
-AI：好的，我将创建一个多页面网站...
-[AI 先创建关于和联系页面，获取URL]
-[AI 再创建包含导航链接的首页]
-网站已部署：https://your-worker.pages.dev/main001
-（首页包含指向其他页面的导航链接）
-```
-
-### 管理界面功能
-
-访问管理界面可以：
-
-- 📊 **查看统计信息**：页面总数、访问次数、密钥数量
-- 🔑 **管理访问密钥**：创建、查看、删除访问密钥
-- 📄 **管理页面**：查看所有部署的页面，一键访问或删除
-- 🔗 **快速访问**：点击页面链接直接跳转
-
----
-
-## ⚙️ 配置说明
-
-| 配置项       | 说明                 | 必填 |
-| ------------ | -------------------- | ---- |
-| `WORKER_URL` | Worker 访问地址      | ✅   |
-| `ACCESS_KEY` | 访问密钥（创建页面） | ✅   |
-
-**说明：**
-
-- `WORKER_URL`：从 Cloudflare Pages 获取的 URL
-- `ACCESS_KEY`：在管理界面创建的访问密钥，用于 AI 创建页面
-
-**页面配置**（在 Worker 管理界面中设置）：
-
-- **页面过期天数**：在管理界面"系统配置"中设置（默认 30 天，0 = 永久保留）
-- **HTML 最大大小**：在管理界面"系统配置"中设置（默认 500 KB）
 
 ---
 
@@ -120,115 +163,67 @@ AI：好的，我将创建一个多页面网站...
 
 **管理密钥（Admin Key）**：
 
-- ✅ 拥有完全管理权限（创建访问密钥、查看列表、删除等）
-- ❌ **不能用于创建页面**（权限分离设计）
+- ✅ 拥有完全管理权限
+- ❌ 不能用于创建页面
 - ⚠️ 不要分享给其他人
-- 🔧 在首次访问管理界面时设置
 
 **访问密钥（Access Key）**：
 
 - ✅ 用于创建和查看页面
 - ❌ 不能管理系统或其他密钥
-- ✅ 可以安全分享给 AI 或其他用户使用
-- 🔧 在管理界面中创建
-
-### 分享给其他用户
-
-如果你想让其他人也能使用你的 Worker：
-
-1. 在管理界面创建一个访问密钥
-2. 将以下信息提供给其他用户：
-   - Worker URL：`https://your-worker.pages.dev`
-   - 访问密钥：`access-key-xxxxx`
-3. 其他用户在自己的 NekroAgent 插件配置中填写即可使用
-
----
-
-## 📝 注意事项
-
-- ⚠️ HTML 内容大小限制默认为 500KB，可在配置中调整
-- ⚠️ 页面默认保留 30 天，可设置为永久保留（0 天）
-- ⚠️ 生成的页面 URL 可公开访问，请勿包含敏感信息
-- ⚠️ 管理密钥拥有完全权限，请妥善保管
-- ⚠️ 数据存储在 Cloudflare D1 中，受 Cloudflare 服务条款约束
+- ✅ 可以安全分享给 AI 使用
 
 ---
 
 ## ❓ 常见问题
 
 <details>
-<summary><strong>Q: 为什么要分离管理密钥和访问密钥？</strong></summary>
+<summary><strong>Q: 多 Agent 模式和直接创建页面有什么区别？</strong></summary>
 
-**安全设计理念：**
+多 Agent 模式的优势：
 
-- 管理密钥权限过大，不应该用于日常操作（创建页面）
-- 访问密钥只能创建页面，即使泄露也不会影响整个系统
-- 符合最小权限原则，提高系统安全性
+- **异步工作**：子 Agent 独立工作，不阻塞主对话
+- **迭代优化**：可以多次发送反馈，逐步完善页面
+- **状态追踪**：实时查看开发进度
+- **智能模型选择**：复杂任务自动使用更强的模型
 
 </details>
 
 <details>
-<summary><strong>Q: 提示未配置访问密钥？</strong></summary>
+<summary><strong>Q: 高级模型配置有什么作用？</strong></summary>
 
-**解决步骤：**
+当配置了 `ADVANCED_MODEL_GROUP` 后：
 
-1. 确认已在管理界面创建访问密钥
-2. 复制密钥后在插件配置中填写到 `ACCESS_KEY` 字段
-3. 保存配置后重启 NekroAgent
-4. 管理密钥不能用于创建页面，必须使用访问密钥
+- 难度 ≥ 阈值的任务会使用高级模型
+- 高级模型通常有更强的代码生成能力
+- 适合处理复杂的交互、动画、可视化需求
+
+</details>
+
+<details>
+<summary><strong>Q: 会话隔离是什么意思？</strong></summary>
+
+- 每个聊天会话的 Agent 是独立的
+- 不同会话之间互不干扰
+- Agent 数据只在当前会话可见
+- 这样可以避免不同用户的任务混淆
 
 </details>
 
 <details>
 <summary><strong>Q: 提示 401 Unauthorized 错误？</strong></summary>
 
-**可能原因：**
+**可能原因**：
 
 1. 访问密钥输入错误
 2. 访问密钥已被删除
 3. Worker URL 配置错误
 
-**解决方案：**
+**解决方案**：
 
 1. 检查 `ACCESS_KEY` 配置是否正确
 2. 在管理界面确认密钥是否存在且活跃
 3. 确认 `WORKER_URL` 配置正确
-4. 重新创建访问密钥并更新配置
-
-</details>
-
-<details>
-<summary><strong>Q: 密钥丢失怎么办？</strong></summary>
-
-**管理密钥丢失：**
-
-1. 登录 Cloudflare Dashboard
-2. 进入 Worker 的 D1 数据库
-3. 查询 `settings` 表：`SELECT * FROM settings WHERE key = 'admin_api_key'`
-4. 查看或更新管理密钥
-
-**访问密钥丢失：**
-
-1. 使用管理密钥登录管理界面
-2. 删除旧密钥
-3. 创建新的访问密钥
-4. 在插件配置中更新
-
-</details>
-
-<details>
-<summary><strong>Q: HTML 内容有什么限制？</strong></summary>
-
-- **大小限制**：默认 500KB，可在 Worker 管理界面的"系统配置"中调整
-- **安全性**：不进行内容过滤，请合理使用
-- **外部资源**：可以引用 CDN 上的 CSS、JS 库
-- **示例**：
-  ```html
-  <link
-    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
-    rel="stylesheet"
-  />
-  ```
 
 </details>
 
@@ -236,19 +231,18 @@ AI：好的，我将创建一个多页面网站...
 
 ## 📚 相关文档
 
-- [📖 部署指南（DEPLOYMENT.md）](https://github.com/KroMiose/nekro-plugin-webapp/blob/main/DEPLOYMENT.md) - 完整的部署步骤和配置说明
-- [💻 开发文档（DEVELOPMENT.md）](https://github.com/KroMiose/nekro-plugin-webapp/blob/main/DEVELOPMENT.md) - 面向开发者的完整开发指南
+- [📖 部署指南（DEPLOYMENT.md）](https://github.com/KroMiose/nekro-plugin-webapp/blob/main/DEPLOYMENT.md)
+- [💻 开发文档（DEVELOPMENT.md）](https://github.com/KroMiose/nekro-plugin-webapp/blob/main/DEVELOPMENT.md)
 - [🌐 Cloudflare Workers 文档](https://developers.cloudflare.com/workers/)
-- [🗄️ D1 数据库文档](https://developers.cloudflare.com/d1/)
 
 ---
 
 ## 🛡️ 安全建议
 
-1. **设置强密钥**：管理密钥和访问密钥都应使用强随机字符串（至少 8 个字符）
-2. **权限分离**：不要把管理密钥用于创建页面，使用访问密钥
+1. **设置强密钥**：管理密钥和访问密钥都应使用强随机字符串
+2. **权限分离**：不要把管理密钥用于创建页面
 3. **定期轮换**：定期更换访问密钥以提高安全性
-4. **妥善保管**：管理密钥拥有完全权限，丢失后只能通过数据库查看
+4. **会话隔离**：不同用户使用不同会话，避免数据混淆
 
 ---
 
@@ -264,13 +258,6 @@ MIT License - 详见 [LICENSE](./LICENSE) 文件
 
 - 🐛 [报告 Bug](https://github.com/KroMiose/nekro-plugin-webapp/issues/new)
 - 💡 [提出功能建议](https://github.com/KroMiose/nekro-plugin-webapp/issues/new)
-
----
-
-## 📮 联系方式
-
-- **GitHub**: [@KroMiose](https://github.com/KroMiose)
-- **项目主页**: [nekro-plugin-webapp](https://github.com/KroMiose/nekro-plugin-webapp)
 
 ---
 
