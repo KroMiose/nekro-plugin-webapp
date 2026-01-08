@@ -34,11 +34,15 @@ from .services import (
     fork_agent,
     get_active_agents_for_chat,
     get_agent,
+    get_all_chat_keys_with_agents,
     get_chat_registry,
+    get_resumable_agents,
+    register_active_chat_key,
     reset_failed_agent,
     send_to_webdev_agent,
     set_agent_template_var,
     start_agent_task,
+    stop_all_tasks,
     update_agent,
     wake_up_agent,
 )
@@ -433,44 +437,6 @@ async def list_webapp_template_vars(_ctx: AgentCtx, agent_id: str) -> str:
     return "\n".join(lines)
 
 
-@plugin.mount_sandbox_method(SandboxMethodType.AGENT, "列出活跃Agent")
-async def list_webapp_agents(_ctx: AgentCtx) -> str:
-    """列出当前会话所有活跃的网页开发 Agent
-
-    Returns:
-        Agent 列表信息
-    """
-    agents = await get_active_agents_for_chat(_ctx.chat_key)
-
-    if not agents:
-        return "当前会话没有活跃的网页开发 Agent"
-
-    lines = [f"📋 当前会话有 {len(agents)} 个活跃 Agent:\n"]
-
-    for agent in agents:
-        status_icon = {
-            AgentStatus.PENDING: "⏳",
-            AgentStatus.THINKING: "🤔",
-            AgentStatus.CODING: "💻",
-            AgentStatus.DEPLOYING: "🚀",
-            AgentStatus.WAITING_FEEDBACK: "💬",
-        }.get(agent.status, "❓")
-
-        diff_badge = (
-            "🟢" if agent.difficulty < 4 else ("🟡" if agent.difficulty < 7 else "🔴")
-        )
-
-        lines.append(
-            f"{status_icon} [{agent.agent_id}] {agent.status.value} ({agent.progress_percent}%) {diff_badge}",
-        )
-        lines.append(f"   需求: {agent.requirement[:50]}...")
-        if agent.deployed_url:
-            lines.append(f"   链接: {agent.deployed_url}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
 @plugin.mount_sandbox_method(SandboxMethodType.BEHAVIOR, "重试Agent")
 async def retry_webapp_agent(_ctx: AgentCtx, agent_id: str) -> str:
     """重试失败的 Agent
@@ -583,10 +549,58 @@ async def webapp_status_inject(_ctx: AgentCtx) -> str:
     return await inject_webapp_status(_ctx)
 
 
-# ==================== 清理方法 ====================
+# ==================== 启动和清理 ====================
+
+
+async def _resume_incomplete_agents() -> None:
+    """恢复未完成的任务（内部函数）"""
+    try:
+        chat_keys = await get_all_chat_keys_with_agents()
+        resumed_count = 0
+
+        for chat_key in chat_keys:
+            agents = await get_resumable_agents(chat_key)
+            for agent in agents:
+                try:
+                    await start_agent_task(agent.agent_id, chat_key)
+                    resumed_count += 1
+                    logger.info(f"恢复 Agent 任务: {agent.agent_id}")
+                except Exception as e:
+                    logger.warning(f"恢复 Agent {agent.agent_id} 失败: {e}")
+
+        if resumed_count > 0:
+            logger.info(f"WebApp 插件启动完成，恢复了 {resumed_count} 个未完成的任务")
+        else:
+            logger.debug("WebApp 插件启动完成，无需恢复的任务")
+    except Exception as e:
+        logger.warning(f"WebApp 插件启动时恢复任务失败: {e}")
 
 
 @plugin.mount_cleanup_method()
 async def clean_up() -> None:
-    """清理插件资源"""
-    logger.info("WebApp 快速部署插件资源已清理")
+    """清理插件资源，停止所有运行中的任务"""
+    try:
+        stopped_count = await stop_all_tasks()
+        if stopped_count > 0:
+            logger.info(f"WebApp 插件已清理 {stopped_count} 个运行中的任务")
+        else:
+            logger.info("WebApp 插件资源已清理")
+    except Exception as e:
+        logger.warning(f"WebApp 插件清理失败: {e}")
+
+
+# 插件加载时调度恢复任务
+def _schedule_resume_on_load() -> None:
+    """在插件加载时调度恢复任务"""
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_resume_incomplete_agents())
+    except RuntimeError:
+        # 没有运行中的事件循环，跳过
+        pass
+
+
+_schedule_resume_on_load()
+

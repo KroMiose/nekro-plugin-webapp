@@ -7,12 +7,11 @@ import asyncio
 import contextlib
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from nekro_agent.api.core import config as core_config
 from nekro_agent.api.core import logger
-from nekro_agent.api.plugin import dynamic_import_pkg
 from nekro_agent.services.agent.creator import OpenAIChatMessage
 from nekro_agent.services.agent.openai import gen_openai_chat_response
 
@@ -30,107 +29,90 @@ from .agent_pool import (
 from .deploy import deploy_html_to_worker
 from .message_bus import notify_main_agent
 
-try:
-    from bs4 import BeautifulSoup
-    from bs4.element import NavigableString
-except ImportError:
-    dynamic_import_pkg("beautifulsoup4", import_name="bs4")
-    from bs4 import BeautifulSoup
-    from bs4.element import NavigableString
-
 # 正在运行的 Agent 任务: (agent_id, chat_key) -> Task
 _running_tasks: dict[tuple[str, str], asyncio.Task] = {}
 
 
 @dataclass
-class HtmlEdit:
-    """HTML 编辑操作"""
+class SearchReplaceBlock:
+    """搜索替换块"""
 
-    selector: str  # CSS 选择器
-    content: str  # 新内容
-    action: str = "replace"  # replace, append, prepend, remove
-
-
-def apply_html_edits(html: str, edits: List[HtmlEdit]) -> Tuple[str, List[str]]:
-    """应用 HTML 编辑操作
-
-    Args:
-        html: 原始 HTML 内容
-        edits: 编辑操作列表
-
-    Returns:
-        (修改后的 HTML, 错误消息列表)
-    """
-    if not edits:
-        return html, []
-
-    errors: List[str] = []
-    soup = BeautifulSoup(html, "html.parser")
-
-    for edit in edits:
-        try:
-            elements = soup.select(edit.selector)
-            if not elements:
-                errors.append(f"选择器 '{edit.selector}' 未匹配到任何元素")
-                continue
-
-            for element in elements:
-                if edit.action == "remove":
-                    element.decompose()
-                elif edit.action == "append":
-                    new_content = BeautifulSoup(edit.content, "html.parser")
-                    for child in new_content.children:
-                        element.append(
-                            child.extract() if hasattr(child, "extract") else NavigableString(str(child)),
-                        )
-                elif edit.action == "prepend":
-                    new_content = BeautifulSoup(edit.content, "html.parser")
-                    children = list(new_content.children)
-                    for child in reversed(children):
-                        element.insert(
-                            0,
-                            child.extract() if hasattr(child, "extract") else NavigableString(str(child)),
-                        )
-                else:  # replace (默认)
-                    element.clear()
-                    new_content = BeautifulSoup(edit.content, "html.parser")
-                    for child in new_content.children:
-                        element.append(
-                            child.extract() if hasattr(child, "extract") else NavigableString(str(child)),
-                        )
-
-        except Exception as e:
-            errors.append(f"应用编辑 '{edit.selector}' 失败: {e}")
-
-    return str(soup), errors
+    search: str  # 要搜索的原始内容
+    replace: str  # 替换后的新内容
 
 
-def parse_html_edits(raw_response: str) -> List[HtmlEdit]:
-    """解析响应中的 <edit> 块
+def parse_search_replace_blocks(raw_response: str) -> List[SearchReplaceBlock]:
+    """解析响应中的 Search/Replace 块
+
+    格式:
+    <<<<<<< SEARCH
+    要替换的原始内容
+    =======
+    替换后的新内容
+    >>>>>>> REPLACE
 
     Args:
         raw_response: LLM 原始响应
 
     Returns:
-        HtmlEdit 列表
+        SearchReplaceBlock 列表
     """
-    edits: List[HtmlEdit] = []
+    blocks: List[SearchReplaceBlock] = []
 
-    # 匹配 <edit selector="..." action="...">...</edit>
-    edit_pattern = re.compile(
-        r'<edit\s+selector=["\']([^"\']+)["\'](?:\s+action=["\']([^"\']+)["\'])?\s*>(.*?)</edit>',
-        re.DOTALL | re.IGNORECASE,
+    # 匹配 <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE
+    pattern = re.compile(
+        r"<{7}\s*SEARCH\s*\n(.*?)\n={7}\s*\n(.*?)\n>{7}\s*REPLACE",
+        re.DOTALL,
     )
 
-    for match in edit_pattern.finditer(raw_response):
-        selector = match.group(1).strip()
-        action = (match.group(2) or "replace").strip().lower()
-        content = match.group(3).strip()
+    for match in pattern.finditer(raw_response):
+        search_content = match.group(1)
+        replace_content = match.group(2)
 
-        if selector:
-            edits.append(HtmlEdit(selector=selector, content=content, action=action))
+        if search_content:
+            blocks.append(
+                SearchReplaceBlock(
+                    search=search_content,
+                    replace=replace_content,
+                ),
+            )
 
-    return edits
+    return blocks
+
+
+def apply_search_replace_blocks(
+    html: str,
+    blocks: List[SearchReplaceBlock],
+) -> Tuple[str, List[str]]:
+    """应用搜索替换块
+
+    Args:
+        html: 原始 HTML 内容
+        blocks: 搜索替换块列表
+
+    Returns:
+        (修改后的 HTML, 错误消息列表)
+    """
+    if not blocks:
+        return html, []
+
+    errors: List[str] = []
+    result = html
+
+    for i, block in enumerate(blocks, 1):
+        if block.search in result:
+            # 精确匹配成功
+            result = result.replace(block.search, block.replace, 1)
+        else:
+            # 尝试忽略首尾空白的模糊匹配
+            search_stripped = block.search.strip()
+            if search_stripped and search_stripped in result:
+                result = result.replace(search_stripped, block.replace.strip(), 1)
+            else:
+                preview = block.search[:60].replace("\n", "\\n")
+                errors.append(f"块 {i}: 未找到匹配内容 '{preview}...'")
+
+    return result, errors
 
 
 def _get_model_groups_with_fallback(difficulty: int) -> List[str]:
@@ -295,7 +277,9 @@ async def run_webdev_agent_loop(agent_id: str, chat_key: str) -> None:
             agent.add_message(
                 msg_type=MessageType.PROGRESS,
                 sender="webdev",
-                content=raw_content[:500] + "..." if len(raw_content) > 500 else raw_content,
+                content=raw_content[:500] + "..."
+                if len(raw_content) > 500
+                else raw_content,
             )
             agent.iteration_count += 1
             await update_agent(agent)
@@ -308,15 +292,15 @@ async def run_webdev_agent_loop(agent_id: str, chat_key: str) -> None:
             # 有完整代码块，直接使用
             html_to_deploy = parsed.html_content
         else:
-            # 尝试解析增量编辑
-            edits = parse_html_edits(raw_content)
-            if edits:
+            # 尝试解析 Search/Replace 块
+            blocks = parse_search_replace_blocks(raw_content)
+            if blocks:
                 # 获取当前 HTML
                 agent = await get_agent(agent_id, chat_key)
                 if agent and agent.current_html:
-                    html_to_deploy, edit_errors = apply_html_edits(
+                    html_to_deploy, edit_errors = apply_search_replace_blocks(
                         agent.current_html,
-                        edits,
+                        blocks,
                     )
                     edit_applied = True
                     if edit_errors:
@@ -607,3 +591,32 @@ async def stop_agent_task(agent_id: str, chat_key: str) -> bool:
 
     del _running_tasks[task_key]
     return True
+
+
+async def stop_all_tasks() -> int:
+    """停止所有正在运行的 Agent 任务
+
+    用于插件清理时调用。
+
+    Returns:
+        停止的任务数量
+    """
+    count = 0
+    for (_agent_id, _chat_key), task in list(_running_tasks.items()):
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            count += 1
+    _running_tasks.clear()
+    return count
+
+
+def get_running_task_keys() -> List[Tuple[str, str]]:
+    """获取当前正在运行的任务列表
+
+    Returns:
+        (agent_id, chat_key) 元组列表
+    """
+    _cleanup_finished_tasks()
+    return list(_running_tasks.keys())

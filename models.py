@@ -310,9 +310,9 @@ class ChatAgentRegistry(BaseModel):
         default_factory=dict,
         description="活跃的 Agent，key 为 agent_id",
     )
-    completed_agents: List[str] = Field(
-        default_factory=list,
-        description="已完成的 Agent ID 列表（保留最近 N 个）",
+    completed_agents: Dict[str, WebDevAgent] = Field(
+        default_factory=dict,
+        description="已完成的 Agent，key 为 agent_id（保留最近 N 个）",
     )
 
     def add_agent(self, agent: WebDevAgent) -> None:
@@ -320,21 +320,27 @@ class ChatAgentRegistry(BaseModel):
         self.active_agents[agent.agent_id] = agent
 
     def get_agent(self, agent_id: str) -> Optional[WebDevAgent]:
-        """获取 Agent"""
-        return self.active_agents.get(agent_id)
+        """获取 Agent（先查活跃，再查已完成）"""
+        return self.active_agents.get(agent_id) or self.completed_agents.get(agent_id)
 
     def remove_agent(self, agent_id: str) -> Optional[WebDevAgent]:
         """移除 Agent（不归档）"""
         return self.active_agents.pop(agent_id, None)
 
     def archive_agent(self, agent_id: str, max_history: int = 10) -> Optional[WebDevAgent]:
-        """归档 Agent（从活跃列表移到已完成列表）"""
+        """归档 Agent（从活跃列表移到已完成列表，保留完整数据）"""
         agent = self.active_agents.pop(agent_id, None)
         if agent:
-            self.completed_agents.append(agent_id)
+            self.completed_agents[agent_id] = agent
             # 保留最近 N 个
             if len(self.completed_agents) > max_history:
-                self.completed_agents = self.completed_agents[-max_history:]
+                # 按完成时间排序，删除最早的
+                sorted_ids = sorted(
+                    self.completed_agents.keys(),
+                    key=lambda x: self.completed_agents[x].complete_time or 0,
+                )
+                for old_id in sorted_ids[: len(self.completed_agents) - max_history]:
+                    del self.completed_agents[old_id]
         return agent
 
     def get_active_count(self) -> int:

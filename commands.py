@@ -93,11 +93,16 @@ async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = Comm
         diff_badge = _get_difficulty_badge(agent.difficulty)
         elapsed = _format_elapsed_time(agent.create_time)
 
+        # HTML 大小信息
+        html_size = f"{len(agent.current_html)}字符" if agent.current_html else "无"
+        vars_count = len(agent.template_vars)
+
         lines.append(f"{status_emoji} [{agent_id}] {agent.status.value} {diff_badge}")
         lines.append(f"   需求: {agent.requirement[:40]}...")
         lines.append(f"   进度: {agent.progress_percent}% | 难度: {agent.difficulty}/10 | 耗时: {elapsed}")
+        lines.append(f"   📄 HTML: {html_size} | 📦 变量: {vars_count}个")
         if agent.deployed_url:
-            lines.append(f"   链接: {agent.deployed_url}")
+            lines.append(f"   🔗 {agent.deployed_url}")
         lines.append("")
 
     lines.append("使用 webapp-info <agent_id> 查看详情")
@@ -134,6 +139,20 @@ async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = Comm
     lines.append(f"🔸 难度: {diff_badge} {agent.difficulty}/10")
     lines.append(f"🔸 当前步骤: {agent.current_step or '无'}")
     lines.append(f"🔸 迭代次数: {agent.iteration_count}")
+
+    # 实现规模
+    lines.append("")
+    lines.append("📄 实现规模:")
+    if agent.current_html:
+        html_len = len(agent.current_html)
+        lines.append(f"   HTML 大小: {html_len} 字符 ({html_len // 1024:.1f} KB)")
+    else:
+        lines.append("   HTML 大小: 无")
+    lines.append(f"   模板变量: {len(agent.template_vars)} 个")
+    if agent.template_vars:
+        var_keys = ", ".join(agent.template_vars.keys())
+        lines.append(f"   变量列表: {var_keys[:60]}{'...' if len(var_keys) > 60 else ''}")
+
     lines.append("")
     lines.append("📝 任务需求:")
     lines.append(agent.requirement)
@@ -149,7 +168,7 @@ async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = Comm
     # 通信记录
     if agent.messages:
         lines.append("")
-        lines.append(f"💬 通信记录 (最近 {min(5, len(agent.messages))} 条):")
+        lines.append(f"💬 通信记录 ({len(agent.messages)} 条，显示最近 {min(5, len(agent.messages))} 条):")
         for msg in agent.messages[-5:]:
             sender = "主Agent" if msg.sender == "main" else "子Agent"
             msg_time = time.strftime("%H:%M:%S", time.localtime(msg.timestamp))
@@ -252,8 +271,15 @@ async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = Comm
     if cmd_content and cmd_content.strip().isdigit():
         page = int(cmd_content.strip())
 
+    # 按完成时间排序（最新的在前）
+    sorted_agents = sorted(
+        registry.completed_agents.values(),
+        key=lambda x: x.complete_time or 0,
+        reverse=True,
+    )
+
     page_size = 5
-    total = len(registry.completed_agents)
+    total = len(sorted_agents)
     total_pages = (total + page_size - 1) // page_size
     page = max(1, min(page, total_pages))
 
@@ -262,18 +288,15 @@ async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = Comm
 
     lines = [f"📜 历史完成任务 (第 {page}/{total_pages} 页)\n"]
 
-    for agent_id in registry.completed_agents[start_idx:end_idx]:
-        agent = await get_agent(agent_id, chat_key)
-        if agent:
-            status_emoji = _get_status_emoji(agent.status)
-            lines.append(f"{status_emoji} [{agent_id}] {agent.status.value}")
-            lines.append(f"   需求: {agent.requirement[:40]}...")
-            if agent.deployed_url:
-                lines.append(f"   链接: {agent.deployed_url}")
-            lines.append("")
-        else:
-            lines.append(f"❓ [{agent_id}] (数据已清理)")
-            lines.append("")
+    for agent in sorted_agents[start_idx:end_idx]:
+        status_emoji = _get_status_emoji(agent.status)
+        html_size = f"{len(agent.current_html)}字符" if agent.current_html else "无"
+        lines.append(f"{status_emoji} [{agent.agent_id}] {agent.status.value}")
+        lines.append(f"   需求: {agent.requirement[:40]}...")
+        lines.append(f"   📄 HTML: {html_size}")
+        if agent.deployed_url:
+            lines.append(f"   🔗 {agent.deployed_url}")
+        lines.append("")
 
     if total_pages > 1:
         lines.append("使用 webapp-history <页码> 查看其他页")

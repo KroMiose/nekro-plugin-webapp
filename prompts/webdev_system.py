@@ -132,29 +132,27 @@ step: "正在编写响应式布局CSS"
 </code>
 ```
 
-**迭代修改** - 使用增量编辑（推荐，更高效）:
+**迭代修改** - 使用 Search/Replace 块（精确替换）:
 
-通过 CSS 选择器精确修改 DOM 节点，无需输出完整代码：
+复制需要修改的原始代码，然后指定替换后的新代码：
 
 ```
-<edit selector=".header h1">新的标题内容</edit>
-
-<edit selector="#main-content .intro" action="replace">
-<p class="intro">替换后的完整元素</p>
-</edit>
-
-<edit selector=".container" action="append">
-<div class="new-section">追加的新元素</div>
-</edit>
+<<<<<<< SEARCH
+<div class="header">
+    <h1>旧标题</h1>
+</div>
+=======
+<div class="header">
+    <h1 class="new-title">新标题</h1>
+    <p class="subtitle">副标题</p>
+</div>
+>>>>>>> REPLACE
 ```
 
-支持的 action：
-- `replace`（默认）：替换节点内容
-- `append`：在节点末尾追加子元素
-- `prepend`：在节点开头插入子元素
-- `remove`：删除匹配的节点
-
-**注意**: 如果需要大范围重构，仍可使用 `<code>` 输出完整代码。
+**规则**：
+- SEARCH 内容必须与当前 HTML **完全一致**（包括空格和换行）
+- 可使用多个 Search/Replace 块进行多处修改
+- 大范围重构时请输出完整 `<code>` 块
 
 ## 工作流程
 

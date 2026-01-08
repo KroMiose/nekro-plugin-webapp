@@ -45,7 +45,7 @@ class WebAppConfig(ConfigBase):
     # ==================== HTML 预览配置 ====================
 
     HTML_PREVIEW_LENGTH: int = Field(
-        default=6400,
+        default=12800,
         title="HTML 预览长度",
         description="子 Agent 在系统提示词中可看到的历史 HTML 代码最大字符数",
     )

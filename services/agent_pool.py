@@ -4,9 +4,10 @@
 所有 Agent 按会话隔离，会话之间互不影响。
 """
 
+import asyncio
 import os
 import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from nekro_agent.api.core import logger
 
@@ -18,6 +19,17 @@ from ..models import (
     WebDevAgent,
 )
 from ..plugin import config, store
+
+# ==================== 并发锁管理 ====================
+
+_chat_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _get_chat_lock(chat_key: str) -> asyncio.Lock:
+    """获取会话级锁，用于防止并发写入冲突"""
+    if chat_key not in _chat_locks:
+        _chat_locks[chat_key] = asyncio.Lock()
+    return _chat_locks[chat_key]
 
 # ==================== 数据持久化 ====================
 
@@ -45,7 +57,7 @@ async def save_chat_registry(chat_key: str, registry: ChatAgentRegistry) -> None
 def generate_agent_id() -> str:
     """生成唯一 Agent ID"""
     suffix = os.urandom(2).hex()
-    return f"WEB-{suffix}"
+    return f"WEB_{suffix}"
 
 
 async def create_agent(
@@ -105,6 +117,9 @@ async def create_agent(
     # 保存到会话注册表
     registry.add_agent(agent)
     await save_chat_registry(chat_key, registry)
+
+    # 注册活跃会话（用于启动时恢复）
+    await register_active_chat_key(chat_key)
 
     logger.info(
         f"创建 WebDev Agent: {agent_id}, chat_key={chat_key}, 难度={difficulty}",
@@ -236,9 +251,10 @@ async def auto_archive_expired_agents(chat_key: str) -> List[str]:
         if agent:
             agent.update_status(AgentStatus.FAILED)
             agent.error_message = f"等待反馈超时 ({config.AGENT_TIMEOUT_MINUTES} 分钟)"
-            registry.remove_agent(agent_id)
+            # 归档而非移除，保留历史记录
+            registry.archive_agent(agent_id, config.MAX_COMPLETED_HISTORY)
             failed_ids.append(agent_id)
-            logger.warning(f"Agent {agent_id} 等待反馈超时，标记为失败")
+            logger.warning(f"Agent {agent_id} 等待反馈超时，已归档")
 
     if archived_ids or failed_ids:
         await save_chat_registry(chat_key, registry)
@@ -521,9 +537,9 @@ async def clean_completed_agents(chat_key: str) -> int:
     registry = await load_chat_registry(chat_key)
     cleaned = 0
 
-    # 清理 completed_agents 列表中的记录
+    # 清理 completed_agents 字典中的记录
     cleaned = len(registry.completed_agents)
-    registry.completed_agents = []
+    registry.completed_agents = {}
 
     if cleaned > 0:
         await save_chat_registry(chat_key, registry)
@@ -627,3 +643,83 @@ async def fork_agent(
     await update_agent(new_agent)
     logger.info(f"从 {source_agent_id} 分支创建新 Agent: {new_agent.agent_id}")
     return new_agent, None
+
+
+# ==================== 恢复未完成任务 ====================
+
+
+async def get_resumable_agents(chat_key: str) -> List[WebDevAgent]:
+    """获取可以恢复执行的 Agent 列表
+
+    用于插件启动时恢复未完成的任务，实现无感重启。
+
+    可恢复的状态:
+    - PENDING: 尚未开始
+    - THINKING: 分析中（被中断）
+    - CODING: 编码中（被中断）
+    - WAITING_FEEDBACK: 等待反馈（需要继续等待）
+
+    Args:
+        chat_key: 会话 key
+
+    Returns:
+        可恢复的 Agent 列表
+    """
+    registry = await load_chat_registry(chat_key)
+    resumable_statuses = {
+        AgentStatus.PENDING,
+        AgentStatus.THINKING,
+        AgentStatus.CODING,
+    }
+    return [
+        agent
+        for agent in registry.active_agents.values()
+        if agent.status in resumable_statuses
+    ]
+
+
+async def get_all_chat_keys_with_agents() -> List[str]:
+    """获取所有有活跃 Agent 的会话 key
+
+    注意：此函数依赖 store 的实现，目前通过全局数据获取。
+    如果 store 不支持遍历，则需要另外维护一个会话列表。
+
+    Returns:
+        会话 key 列表
+    """
+    # 从全局存储获取已知的会话 key 列表
+    data = await store.get(store_key="webapp_active_chat_keys")
+    if data:
+        import json
+
+        try:
+            return json.loads(data)
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
+async def register_active_chat_key(chat_key: str) -> None:
+    """注册活跃的会话 key（用于恢复时遍历）"""
+    import json
+
+    chat_keys = await get_all_chat_keys_with_agents()
+    if chat_key not in chat_keys:
+        chat_keys.append(chat_key)
+        await store.set(store_key="webapp_active_chat_keys", value=json.dumps(chat_keys))
+
+
+async def unregister_chat_key_if_empty(chat_key: str) -> None:
+    """如果会话没有活跃 Agent 则移除注册"""
+    import json
+
+    registry = await load_chat_registry(chat_key)
+    if not registry.active_agents:
+        chat_keys = await get_all_chat_keys_with_agents()
+        if chat_key in chat_keys:
+            chat_keys.remove(chat_key)
+            await store.set(
+                store_key="webapp_active_chat_keys",
+                value=json.dumps(chat_keys),
+            )
+
