@@ -56,7 +56,7 @@ async def notify_main_agent(
             MessageType.PROGRESS: "工作进度",
             MessageType.RESULT: "完成",
         }.get(msg_type, "消息")
-        system_message = f"{type_emoji} [{type_desc}]\n{message}"
+        system_message = f"{type_emoji} [{type_desc} (agent_id: {agent_id})]\n{message}"
 
     # 添加到 Agent 消息历史
     await add_message_to_agent(
