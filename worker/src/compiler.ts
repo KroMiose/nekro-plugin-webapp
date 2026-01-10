@@ -16,7 +16,8 @@ async function ensureEsbuildInitialized(env: Env) {
     // or fetch it. For simplicity here, we assume standard initialization.
     try {
         await esbuild.initialize({
-            wasmURL: 'https://unpkg.com/esbuild-wasm@0.20.0/esbuild.wasm'
+            wasmURL: 'https://unpkg.com/esbuild-wasm@0.20.0/esbuild.wasm',
+            worker: false
         });
         initialized = true;
     } catch (e) {
