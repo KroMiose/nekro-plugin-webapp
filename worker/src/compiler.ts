@@ -104,6 +104,18 @@ export async function compileProject(files: Record<string, string>, env: Env): P
         return { success: false, error: 'No output generated' };
 
     } catch (e: any) {
+        // Format esbuild errors
+        if (e.errors && Array.isArray(e.errors)) {
+            const messages = e.errors.map((err: any) => {
+                let msg = `❌ [Error] ${err.text}`;
+                if (err.location) {
+                    msg += `\n   File: ${err.location.file || 'unknown'}:${err.location.line}:${err.location.column}`;
+                    msg += `\n   Line: ${err.location.lineText}`;
+                }
+                return msg;
+            });
+            return { success: false, error: messages.join('\n\n') };
+        }
         return { success: false, error: e.message || String(e) };
     }
 }
