@@ -6,7 +6,6 @@ import { Env, CreatePageRequest, CreatePageResponse } from './types';
 import { validateApiKey, hasPermission, generateApiKey } from './auth';
 import { createPage, getPage, incrementAccessCount, deletePage, listPages, createApiKey, listApiKeys, deleteApiKey, getStats, getAdminKey, setAdminKey, getSetting, setSetting } from './storage';
 import { ensureDatabaseInitialized } from './init';
-import esbuildWasm from 'esbuild-wasm/esbuild.wasm'; // Explicit import to bundle Wasm
 
 /**
  * CORS 响应头
@@ -53,13 +52,9 @@ function htmlResponse(html: string): Response {
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
-        // Inject bundled Wasm module into env
-        // This is crucial for Cloudflare Workers to allow Wasm instantiation
-        const envWithWasm = { ...env, ESBUILD_WASM: esbuildWasm as unknown as WebAssembly.Module };
-
 		// 确保数据库已初始化（首次访问时自动初始化）
 		try {
-			await ensureDatabaseInitialized(envWithWasm);
+			await ensureDatabaseInitialized(env);
 		} catch (error: any) {
 			console.error('Database initialization failed:', error);
 			return errorResponse('Database initialization failed: ' + error.message, 500);
@@ -75,12 +70,12 @@ export default {
 
 		// API 路由
 		if (path.startsWith('/api/')) {
-			return handleAPI(request, envWithWasm, path);
+			return handleAPI(request, env, path);
 		}
 
 		// 管理路由
 		if (path.startsWith('/admin/')) {
-			return handleAdmin(request, envWithWasm, path);
+			return handleAdmin(request, env, path);
 		}
 
 		// 根路径 - 返回简单说明页
@@ -91,7 +86,7 @@ export default {
 		// 页面访问 /{page_id}
 		const pageId = path.substring(1);
 		if (pageId) {
-			return servePage(pageId, envWithWasm);
+			return servePage(pageId, env);
 		}
 
 		return errorResponse('Not Found', 404);
