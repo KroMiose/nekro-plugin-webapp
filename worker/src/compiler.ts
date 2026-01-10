@@ -3,7 +3,14 @@ import { Env } from './types';
 
 // Shim location for esbuild-wasm in Cloudflare Workers
 if (typeof self !== 'undefined' && !(self as any).location) {
-    (self as any).location = { href: '/', protocol: 'https:', host: 'localhost' };
+    (self as any).location = { 
+        href: 'https://localhost/', 
+        protocol: 'https:', 
+        host: 'localhost', 
+        hostname: 'localhost', 
+        origin: 'https://localhost',
+        pathname: '/'
+    };
 }
 
 // Initialize esbuild once
@@ -27,9 +34,12 @@ async function ensureEsbuildInitialized(env: Env) {
         initialized = true;
     } catch (e) {
         // Ignore "already initialized" errors
-        if (!(e instanceof Error && e.message.includes('initialize'))) {
-            throw e;
+        if (e instanceof Error && e.message.includes('initialize')) {
+            return;
         }
+        initialized = false; // Reset flag on failure
+        console.error("esbuild initialize failed:", e);
+        throw e;
     }
 }
 
