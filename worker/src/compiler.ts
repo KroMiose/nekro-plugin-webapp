@@ -1,6 +1,11 @@
 import * as esbuild from 'esbuild-wasm';
 import { Env } from './types';
 
+// Shim location for esbuild-wasm in Cloudflare Workers
+if (typeof self !== 'undefined' && !(self as any).location) {
+    (self as any).location = { href: '/', protocol: 'https:', host: 'localhost' };
+}
+
 // Initialize esbuild once
 let initialized = false;
 
