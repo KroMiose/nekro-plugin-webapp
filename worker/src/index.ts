@@ -133,6 +133,33 @@ async function handleAPI(request: Request, env: Env, path: string): Promise<Resp
 		return errorResponse('Unauthorized', 401);
 	}
 
+    // POST /api/compile - 编译项目
+    if (path === '/api/compile' && request.method === 'POST') {
+        if (!hasPermission(auth.permissions!, 'create')) { // Reuse create permission for now
+            return errorResponse('Forbidden', 403);
+        }
+
+        try {
+            const body = await request.json() as { files: Record<string, string> };
+            if (!body.files || Object.keys(body.files).length === 0) {
+                return errorResponse('Missing files for compilation');
+            }
+
+            // Lazy import compiler to avoid loading wasm on every request
+            const { compileProject } = await import('./compiler');
+            const result = await compileProject(body.files, env);
+
+            if (!result.success) {
+                return jsonResponse({ success: false, error: result.error }, 400); // 400 for compile errors
+            }
+
+            return jsonResponse({ success: true, output: result.output });
+
+        } catch (e: any) {
+            return errorResponse(e.message || 'Compilation failed', 500);
+        }
+    }
+
 	// POST /api/pages - 创建页面
 	if (path === '/api/pages' && request.method === 'POST') {
 		if (!hasPermission(auth.permissions!, 'create')) {
