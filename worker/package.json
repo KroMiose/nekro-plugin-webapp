@@ -17,9 +17,6 @@
   ],
   "author": "NekroAgent Team",
   "license": "MIT",
-  "dependencies": {
-    "esbuild-wasm": "^0.20.0"
-  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",
     "wrangler": "^3.94.0"

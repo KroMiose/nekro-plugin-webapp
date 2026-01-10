@@ -18,6 +18,3 @@ database_id = "1469ae3f-62bd-448e-833c-b39703e0b953" # 请替换为你的 Databa
 [vars]
 # 数据库初始化标志（Worker 首次运行时自动初始化）
 DB_INITIALIZED = "false"
-
-[wasm_modules]
-ESBUILD_WASM = "node_modules/esbuild-wasm/esbuild.wasm"
