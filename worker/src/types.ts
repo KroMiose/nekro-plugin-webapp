@@ -4,6 +4,7 @@
 
 export interface Env {
 	DB: D1Database;
+	ESBUILD_WASM: WebAssembly.Module; // Binding for bundled WASM
 	DB_INITIALIZED?: string;
 }
 

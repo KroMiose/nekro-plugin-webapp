@@ -27,10 +27,20 @@ async function ensureEsbuildInitialized(env: Env) {
     // In CF Workers, it's often better to import the wasm as a module if configured,
     // or fetch it. For simplicity here, we assume standard initialization.
     try {
-        await esbuild.initialize({
-            wasmURL: 'https://unpkg.com/esbuild-wasm@0.20.0/esbuild.wasm',
-            worker: false
-        });
+        // Try to use the bound WASM module if available (Best practice for CF Workers)
+        if (env.ESBUILD_WASM) {
+            await esbuild.initialize({
+                wasmModule: env.ESBUILD_WASM,
+                worker: false
+            });
+        } else {
+            // Fallback to URL (Likely to fail in CF Workers due to security)
+            await esbuild.initialize({
+                wasmURL: 'https://unpkg.com/esbuild-wasm@0.20.0/esbuild.wasm',
+                worker: false
+            });
+        }
+
         initialized = true;
     } catch (e) {
         // Ignore "already initialized" errors
