@@ -1,11 +1,4 @@
-"""提示词模块"""
+"""提示词模块
 
-from .main_inject import inject_webapp_status
-from .webdev_system import build_webdev_messages, build_webdev_system_prompt
-
-__all__ = [
-    "build_webdev_messages",
-    "build_webdev_system_prompt",
-    "inject_webapp_status",
-]
-
+包含 WebDev Agent 的系统提示词和消息构建。
+"""

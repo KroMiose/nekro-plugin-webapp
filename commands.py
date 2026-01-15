@@ -1,9 +1,10 @@
 """管理员命令
 
-提供管理员用于查看和管理 WebApp Agent 系统的命令。
+提供管理员用于查看和管理 WebApp Agent 协作系统的命令。
 """
 
 import time
+from typing import List
 
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.matcher import Matcher
@@ -15,327 +16,692 @@ from nekro_agent.adapters.onebot_v11.matchers.command import (
     on_command,
 )
 
-from .models import AgentStatus
-from .services import (
-    cancel_agent,
-    clean_completed_agents,
-    get_active_agents_for_chat,
-    get_agent,
-    get_chat_registry,
-)
+from .agent_core import SubAgentStatus
+from .models import WebDevAgent
+from .services import cancel_agent_task, get_active_agents, get_agent, pool
+
+# ==================== 格式化工具 ====================
 
 
-def _get_status_emoji(status: AgentStatus) -> str:
-    """获取状态对应的 emoji"""
-    return {
-        AgentStatus.PENDING: "⏳",
-        AgentStatus.THINKING: "🤔",
-        AgentStatus.CODING: "💻",
-        AgentStatus.DEPLOYING: "🚀",
-        AgentStatus.WAITING_FEEDBACK: "💬",
-        AgentStatus.COMPLETED: "✅",
-        AgentStatus.FAILED: "❌",
-        AgentStatus.CANCELLED: "🚫",
-    }.get(status, "❓")
+STATUS_EMOJI = {
+    SubAgentStatus.PENDING: "⏳",
+    SubAgentStatus.WORKING: "💻",
+    SubAgentStatus.WAITING_INPUT: "💬",
+    SubAgentStatus.REVIEWING: "🧐",
+    SubAgentStatus.COMPLETED: "✅",
+    SubAgentStatus.FAILED: "❌",
+    SubAgentStatus.CANCELLED: "🚫",
+}
+
+STATUS_COLOR = {
+    SubAgentStatus.PENDING: "⚪",
+    SubAgentStatus.WORKING: "🔵",
+    SubAgentStatus.WAITING_INPUT: "🟡",
+    SubAgentStatus.REVIEWING: "🟣",
+    SubAgentStatus.COMPLETED: "🟢",
+    SubAgentStatus.FAILED: "🔴",
+    SubAgentStatus.CANCELLED: "⚫",
+}
+
+# ... (omitted)
+
+STATUS_TEXT_CN = {
+    SubAgentStatus.PENDING: "待命",
+    SubAgentStatus.WORKING: "运行中",
+    SubAgentStatus.WAITING_INPUT: "等待用户",
+    SubAgentStatus.REVIEWING: "审查中",
+    SubAgentStatus.COMPLETED: "已完成",
+    SubAgentStatus.FAILED: "失败",
+    SubAgentStatus.CANCELLED: "已取消",
+}
 
 
-def _get_difficulty_badge(difficulty: int) -> str:
-    """获取难度徽章"""
-    if difficulty >= 8:
-        return "🔴"
-    if difficulty >= 6:
-        return "🟡"
-    if difficulty >= 4:
-        return "🟢"
-    return "⚪"
+def _status_emoji(status: SubAgentStatus) -> str:
+    return STATUS_EMOJI.get(status, "❓")
 
 
-def _format_elapsed_time(start_time: int) -> str:
+def _status_color(status: SubAgentStatus) -> str:
+    return STATUS_COLOR.get(status, "⚪")
+
+
+def _format_time(seconds: int) -> str:
     """格式化耗时"""
-    elapsed = int(time.time()) - start_time
-    if elapsed < 60:
-        return f"{elapsed}秒"
-    if elapsed < 3600:
-        return f"{elapsed // 60}分{elapsed % 60}秒"
-    hours = elapsed // 3600
-    minutes = (elapsed % 3600) // 60
-    return f"{hours}小时{minutes}分"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60}s"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60}m"
 
 
-def _format_timestamp(ts: int) -> str:
-    """格式化时间戳"""
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+def _format_chars(chars: int) -> str:
+    """格式化字符数"""
+    if chars < 1000:
+        return f"{chars}"
+    if chars < 10000:
+        return f"{chars / 1000:.1f}k"
+    return f"{chars // 1000}k"
 
 
-# ==================== 命令实现 ====================
+def _calc_stream_speed(agent: WebDevAgent) -> str:
+    """计算流式输出速度"""
+    if not agent.stream_start_time or agent.stream_chars == 0:
+        return "0/s"
+    elapsed = time.time() - agent.stream_start_time
+    if elapsed < 1:
+        return f"{agent.stream_chars}/s"
+    speed = agent.stream_chars / elapsed
+    return f"{int(speed)}/s"
+
+
+STATUS_TEXT_CN = {
+    SubAgentStatus.PENDING: "待命",
+    SubAgentStatus.WORKING: "运行中",
+    SubAgentStatus.WAITING_INPUT: "等待用户",
+    SubAgentStatus.COMPLETED: "已完成",
+    SubAgentStatus.FAILED: "失败",
+    SubAgentStatus.CANCELLED: "已取消",
+}
+
+
+def _status_text_cn(status: SubAgentStatus) -> str:
+    return STATUS_TEXT_CN.get(status, status.value)
+
+
+def _calc_auto_progress(agent: WebDevAgent, agent_map: dict) -> tuple[str, int]:
+    """自动计算综合进度
+
+    返回：(进度描述, 完成子Agent数/总子Agent数)
+    """
+    # 终态
+    if agent.status == SubAgentStatus.COMPLETED:
+        return "✅ 完成", 100
+    if agent.status == SubAgentStatus.FAILED:
+        return "❌ 失败", 0
+    if agent.status == SubAgentStatus.CANCELLED:
+        return "🚫 取消", 0
+    if agent.status == SubAgentStatus.PENDING:
+        return "⏳ 待启动", 0
+
+    # 活跃状态 - 根据输出和子Agent计算
+    parts = []
+
+    # 自身输出状态
+    if agent.stream_chars > 0:
+        speed = _calc_stream_speed(agent)
+        parts.append(f"📤 {_format_chars(agent.stream_chars)}字符 ({speed})")
+    elif agent.output:
+        parts.append(f"📦 {_format_chars(len(str(agent.output)))}字符")
+    elif agent.current_html:
+        parts.append(f"📄 {_format_chars(len(agent.current_html))}")
+
+    # 子Agent状态
+    if agent.children_ids:
+        children = [
+            agent_map.get(cid) for cid in agent.children_ids if cid in agent_map
+        ]
+        completed = sum(
+            1 for c in children if c and c.status == SubAgentStatus.COMPLETED
+        )
+        total = len(children)
+        parts.append(f"🤖 子任务 {completed}/{total}")
+
+    if agent.status == SubAgentStatus.WAITING_INPUT:
+        parts.append("💬 等待反馈")
+
+    return " · ".join(parts) if parts else "🔄 处理中", 0
+
+
+async def _build_agent_tree(
+    agents: List[WebDevAgent],
+    verbose: bool = False,
+) -> List[str]:
+    """构建层级 Agent 树状展示"""
+    lines = []
+
+    # 找出根 Agent（无父节点）
+    root_agents = [a for a in agents if a.parent_id is None]
+    agent_map = {a.agent_id: a for a in agents}
+
+    def render_agent(
+        agent: WebDevAgent,
+        prefix: str = "",
+        is_last: bool = True,
+    ) -> None:
+        # 连接符 (3字符宽度，确保对齐)
+        connector = "└─ " if is_last else "├─ "
+        # 子前缀: 如果不是最后一个，需要竖线连接后续节点
+        # 竖线在第1位: " │ "
+        child_prefix = prefix + ("   " if is_last else " │ ")
+
+        # 状态指示器
+        emoji = _status_emoji(agent.status)
+        elapsed = _format_time(int(time.time()) - agent.created_at)
+
+        # 进度与速度
+        progress_info = ""
+        if agent.status == SubAgentStatus.WORKING:
+            speed = _calc_stream_speed(agent)
+            chars = _format_chars(agent.stream_chars)
+            progress_info = f"⚡{speed} · 📝{chars}字"
+        elif agent.status == SubAgentStatus.COMPLETED:
+            progress_info = f"🏁{_format_chars(agent.total_chars_generated)}字"
+
+        # 角色/层级标识
+        # role_tag = f"[{agent.role}]" if agent.role else f"L{agent.level}"
+        # 翻译角色
+        role_cn = {
+            "architect": "架构师",
+            "engineer": "工程师",
+            "creator": "策划",
+            "": "根任务",
+        }.get(agent.role, agent.role)
+        role_tag = f"[{role_cn}]" if agent.role else f"[Lv.{agent.level}]"
+
+        # 难度星级 (仅 verbose 或 根节点显示)
+        diff_star = ""
+        if verbose or agent.level == 1:
+            diff_star = f" · ⭐{agent.difficulty}"
+
+        # 主行
+        # 格式: └─ 🔵 [role] ID · status · info · time
+        status_cn = _status_text_cn(agent.status)
+        status_line = f"{emoji} {status_cn}"
+        if progress_info:
+            status_line += f" · {progress_info}"
+        status_line += f" · ⏱️{elapsed}{diff_star}"
+
+        lines.append(f"{prefix}{connector}{role_tag} {agent.agent_id}")
+        lines.append(f"{child_prefix}   {status_line}")
+
+        # 详细模式
+        if verbose:
+            lines.append(
+                f"{child_prefix}   📝 {agent.task[:40]}{'...' if len(agent.task) > 40 else ''}",
+            )
+            if agent.current_step:
+                lines.append(f"{child_prefix}   👉 {agent.current_step}")
+            if agent.deployed_url:
+                lines.append(f"{child_prefix}   🔗 {agent.deployed_url}")
+
+        # 子 Agent 统计
+        children = [agent_map[cid] for cid in agent.children_ids if cid in agent_map]
+        if children and not verbose:  # 简单展示子节点摘要 (如果不是 verbose)
+            active_kids = sum(1 for c in children if c.is_active())
+            if active_kids > 0:
+                lines.append(f"{child_prefix}   🤖 {active_kids} 个活跃子任务")
+
+        # 递归渲染子 Agent
+        for i, child in enumerate(children):
+            render_agent(child, child_prefix, is_last=(i == len(children) - 1))
+
+    # 渲染所有根 Agent
+    for i, root in enumerate(root_agents):
+        # 移除了空行，以保持树的连贯性 (特别是当使用了 ├─ 连接符时)
+        render_agent(root, "", is_last=(i == len(root_agents) - 1))
+
+    return lines
+
+
+# ==================== 命令 ====================
 
 
 @on_command(
     "webapp_list",
-    aliases={"webapp-list", "webapp_ls", "webapp-ls", "wa_ls", "wa-ls", "wa_list", "wa-list"},
+    aliases={"webapp-list", "wa_list", "wa-list", "wa_ls", "wa-ls"},
     priority=5,
     block=True,
 ).handle()
-async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
-    """列出当前会话的所有活跃 Agent"""
-    _username, _cmd_content, chat_key, _chat_type = await command_guard(event, bot, arg, matcher)
+async def _(
+    matcher: Matcher,
+    event: MessageEvent,
+    bot: Bot,
+    arg: Message = CommandArg(),
+):
+    """列出活跃 Agent
 
-    registry = await get_chat_registry(chat_key)
+    用法: wa_list [-v|--verbose]
+    """
+    _, cmd, chat_key, _ = await command_guard(event, bot, arg, matcher)
 
-    if not registry.active_agents:
-        await finish_with(matcher, message="当前会话没有活跃的网页开发 Agent")
+    verbose = cmd.strip() in ("-v", "--verbose", "-d", "--detail")
+
+    # 获取活跃 Agent
+    active_agents = await get_active_agents(chat_key)
+
+    if not active_agents:
+        await finish_with(matcher, message="📭 当前会话没有活跃的 Agent")
         return
 
-    lines = [f"📋 当前会话活跃的 Agent ({len(registry.active_agents)} 个):\n"]
+    # 收集所有相关 Agent（包括已完成的子 Agent）
+    all_agents: list[WebDevAgent] = list(active_agents)
+    agent_ids = {a.agent_id for a in all_agents}
 
-    for agent_id, agent in registry.active_agents.items():
-        status_emoji = _get_status_emoji(agent.status)
-        diff_badge = _get_difficulty_badge(agent.difficulty)
-        elapsed = _format_elapsed_time(agent.create_time)
+    # 递归收集每个活跃 Agent 的所有子 Agent
+    async def collect_children(agent: WebDevAgent) -> None:
+        for child_id in agent.children_ids:
+            if child_id not in agent_ids:
+                child = await get_agent(child_id, chat_key)
+                if child:
+                    all_agents.append(child)
+                    agent_ids.add(child_id)
+                    await collect_children(child)
 
-        # HTML 大小信息
-        html_size = f"{len(agent.current_html)}字符" if agent.current_html else "无"
-        vars_count = len(agent.template_vars)
+    for agent in list(active_agents):
+        await collect_children(agent)
 
-        lines.append(f"{status_emoji} [{agent_id}] {agent.status.value} {diff_badge}")
-        lines.append(f"   需求: {agent.requirement[:40]}...")
-        lines.append(f"   进度: {agent.progress_percent}% | 难度: {agent.difficulty}/10 | 耗时: {elapsed}")
-        lines.append(f"   📄 HTML: {html_size} | 📦 变量: {vars_count}个")
-        if agent.deployed_url:
-            lines.append(f"   🔗 {agent.deployed_url}")
-        lines.append("")
+    agents = all_agents
 
-    lines.append("使用 webapp-info <agent_id> 查看详情")
-    await finish_with(matcher, message="\n".join(lines))
+    # 统计
+    working = sum(1 for a in agents if a.status == SubAgentStatus.WORKING)
+    waiting = sum(1 for a in agents if a.status == SubAgentStatus.WAITING_INPUT)
+    levels = max((a.level for a in agents), default=1)
+
+    header = [
+        "🌐 WebApp Agent 协作状态",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"📊 总计 {len(agents)} 个 · 💻运行中 {working} · 💬等待 {waiting} · 🏗️层级 {levels}",
+        "",
+    ]
+
+    tree = await _build_agent_tree(agents, verbose=verbose)
+
+    footer = [
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "💡 提示: wa_list -v 查看详情 · wa_info <ID> 查看单个",
+    ]
+
+    await finish_with(matcher, message="\n".join(header + tree + footer))
 
 
 @on_command(
     "webapp_info",
-    aliases={"webapp-info", "webapp_i", "webapp-i", "wa_info", "wa-info"},
+    aliases={"webapp-info", "wa_info", "wa-info"},
     priority=5,
     block=True,
 ).handle()
-async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
-    """查看指定 Agent 的详细信息"""
-    _username, cmd_content, chat_key, _chat_type = await command_guard(event, bot, arg, matcher)
+async def _(
+    matcher: Matcher,
+    event: MessageEvent,
+    bot: Bot,
+    arg: Message = CommandArg(),
+):
+    """查看 Agent 详情
 
-    if not cmd_content:
-        await finish_with(matcher, message="请指定 Agent ID，如: webapp-info WEB-a3f8")
+    用法: wa_info <ID> [-v|--verbose]
+    """
+    _, cmd, chat_key, _ = await command_guard(event, bot, arg, matcher)
+
+    if not cmd:
+        await finish_with(matcher, message="❌ 请指定 Agent ID\n用法: wa_info <ID>")
         return
 
-    agent_id = cmd_content.strip()
+    parts = cmd.strip().split()
+    agent_id = parts[0]
+    verbose = len(parts) > 1 and parts[1] in ("-v", "--verbose")
+
     agent = await get_agent(agent_id, chat_key)
-
     if not agent:
-        await finish_with(matcher, message=f"Agent {agent_id} 不存在")
+        await finish_with(matcher, message=f"❌ Agent {agent_id} 不存在")
         return
 
-    diff_badge = _get_difficulty_badge(agent.difficulty)
+    emoji = _status_emoji(agent.status)
+    elapsed = _format_time(int(time.time()) - agent.created_at)
 
-    # 格式化详细信息
-    lines = [f"📊 Agent [{agent_id}] 详细信息\n"]
-    lines.append(f"🔸 状态: {agent.status.value}")
-    lines.append(f"🔸 进度: {agent.progress_percent}%")
-    lines.append(f"🔸 难度: {diff_badge} {agent.difficulty}/10")
-    lines.append(f"🔸 当前步骤: {agent.current_step or '无'}")
-    lines.append(f"🔸 迭代次数: {agent.iteration_count}")
+    # 流式统计
+    stream_info = "等待输出..."
+    if agent.stream_chars > 0:
+        speed = _calc_stream_speed(agent)
+        stream_info = f"{_format_chars(agent.stream_chars)} 字 ({speed})"
+    elif agent.output:
+        stream_info = f"📦 已产出 {_format_chars(len(str(agent.output)))} 字"
 
-    # 实现规模
+    # 进度条
+    progress_bar = "█" * (agent.progress // 10) + "░" * (10 - agent.progress // 10)
+
+    # 角色汉化
+    role_cn = {
+        "architect": "架构师",
+        "engineer": "工程师",
+        "creator": "策划",
+        "": "根任务",
+    }.get(agent.role, agent.role)
+
+    lines = [
+        f"🌐 Agent [{agent.agent_id}]",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"{emoji} 状态: {_status_text_cn(agent.status)} ({agent.progress}%)",
+        f"📊 进度: {progress_bar}",
+        f"⚡ 输出: {stream_info}",
+        f"🏗️ 角色: {role_cn} (Lv.{agent.level})",
+        f"⏱️ 耗时: {elapsed}",
+        f"🎯 难度: {'⭐' * agent.difficulty}{'☆' * (5 - agent.difficulty)} ({agent.difficulty}/5)",
+    ]
+
+    if agent.current_step:
+        lines.append(f"🔸 当前: {agent.current_step}")
+
     lines.append("")
-    lines.append("📄 实现规模:")
-    if agent.current_html:
-        html_len = len(agent.current_html)
-        lines.append(f"   HTML 大小: {html_len} 字符 ({html_len // 1024:.1f} KB)")
-    else:
-        lines.append("   HTML 大小: 无")
-    lines.append(f"   模板变量: {len(agent.template_vars)} 个")
-    if agent.template_vars:
-        var_keys = ", ".join(agent.template_vars.keys())
-        lines.append(f"   变量列表: {var_keys[:60]}{'...' if len(var_keys) > 60 else ''}")
+    lines.append(f"📝 任务: {agent.task[:60]}{'...' if len(agent.task) > 60 else ''}")
 
+    # 完整任务树视图
     lines.append("")
-    lines.append("📝 任务需求:")
-    lines.append(agent.requirement)
-    lines.append("")
-    lines.append("⏱️ 时间信息:")
-    lines.append(f"   创建: {_format_timestamp(agent.create_time)}")
-    if agent.start_time:
-        lines.append(f"   启动: {_format_timestamp(agent.start_time)}")
-    lines.append(f"   最后活跃: {_format_timestamp(agent.last_active_time)}")
-    if agent.complete_time:
-        lines.append(f"   完成: {_format_timestamp(agent.complete_time)}")
+    lines.append("🌳 任务树视图:")
 
-    # 通信记录
-    if agent.messages:
+    # 找到根 Agent
+    root_agent = agent
+    all_agents = {agent.agent_id: agent}
+
+    # 向上找根
+    current = agent
+    while current.parent_id:
+        parent = await get_agent(current.parent_id, chat_key)
+        if parent:
+            all_agents[parent.agent_id] = parent
+            root_agent = parent
+            current = parent
+        else:
+            break
+
+    # 递归收集所有子 Agent
+    async def collect_all_children(a: WebDevAgent) -> None:
+        for child_id in a.children_ids:
+            if child_id not in all_agents:
+                child = await get_agent(child_id, chat_key)
+                if child:
+                    all_agents[child_id] = child
+                    await collect_all_children(child)
+
+    for a in list(all_agents.values()):
+        await collect_all_children(a)
+
+    # 渲染树
+    def render_tree_node(
+        a: WebDevAgent,
+        prefix: str = "",
+        is_last: bool = True,
+    ) -> None:
+        connector = "└─" if is_last else "├─"
+        marker = "👉" if a.agent_id == agent.agent_id else "  "  # 标记当前 Agent
+        status_emoji = _status_emoji(a.status)
+        role_name = {
+            "architect": "架构师",
+            "engineer": "工程师",
+            "creator": "策划",
+            "": "根任务",
+        }.get(a.role, a.role)
+        role_tag = f"[{role_name}]" if a.role else f"[Lv.{a.level}]"
+        lines.append(
+            f"{prefix}{connector}{marker}{status_emoji} {role_tag} {a.agent_id}",
+        )
+
+        child_prefix = prefix + ("   " if is_last else "│  ")
+        children = [all_agents[cid] for cid in a.children_ids if cid in all_agents]
+        for i, child in enumerate(children):
+            render_tree_node(child, child_prefix, is_last=(i == len(children) - 1))
+
+    render_tree_node(root_agent, "  ")
+
+    # 产物
+    if agent.current_html or agent.deployed_url or agent.child_outputs:
         lines.append("")
-        lines.append(f"💬 通信记录 ({len(agent.messages)} 条，显示最近 {min(5, len(agent.messages))} 条):")
-        for msg in agent.messages[-5:]:
-            sender = "主Agent" if msg.sender == "main" else "子Agent"
-            msg_time = time.strftime("%H:%M:%S", time.localtime(msg.timestamp))
-            content_preview = msg.content[:50] + "..." if len(msg.content) > 50 else msg.content
-            lines.append(f"   [{msg_time}] {sender}: {content_preview}")
+        if agent.current_html:
+            lines.append(f"📄 HTML: {len(agent.current_html)} 字符")
+        if agent.template:
+            lines.append(f"📋 模板: {len(agent.template)} 字符")
+        if agent.child_outputs:
+            lines.append(f"📦 子产物: {', '.join(agent.child_outputs.keys())}")
+        if agent.deployed_url:
+            lines.append(f"🔗 {agent.deployed_url}")
 
-    if agent.deployed_url:
+    # 详细模式
+    if verbose:
         lines.append("")
-        lines.append(f"🔗 预览链接: {agent.deployed_url}")
+        lines.append(f"📨 消息记录: {len(agent.messages)} 条")
+        for msg in agent.messages[-3:]:
+            time_str = time.strftime("%H:%M", time.localtime(msg.timestamp))
+            sender = "⬆️" if msg.sender in ("main", "parent") else "⬇️"
+            content = msg.content[:30] + "..." if len(msg.content) > 30 else msg.content
+            lines.append(f"  {sender}[{time_str}] {content}")
 
     if agent.error_message:
         lines.append("")
-        lines.append(f"❌ 错误信息: {agent.error_message}")
+        lines.append(f"❌ 错误: {agent.error_message[:50]}")
 
     await finish_with(matcher, message="\n".join(lines))
 
 
-@on_command("webapp_stats", aliases={"webapp-stats", "wa_stats", "wa-stats"}, priority=5, block=True).handle()
-async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
-    """查看当前会话统计信息"""
-    _username, _cmd_content, chat_key, _chat_type = await command_guard(event, bot, arg, matcher)
+@on_command(
+    "webapp_cancel",
+    aliases={"webapp-cancel", "wa_cancel", "wa-cancel"},
+    priority=5,
+    block=True,
+).handle()
+async def _(
+    matcher: Matcher,
+    event: MessageEvent,
+    bot: Bot,
+    arg: Message = CommandArg(),
+):
+    """取消 Agent"""
+    _, cmd, chat_key, _ = await command_guard(event, bot, arg, matcher)
 
-    registry = await get_chat_registry(chat_key)
-
-    # 统计各状态数量
-    status_counts: dict[str, int] = {}
-    total_active = 0
-    total_difficulty = 0
-
-    for agent in registry.active_agents.values():
-        status_name = agent.status.value
-        status_counts[status_name] = status_counts.get(status_name, 0) + 1
-        if agent.is_active():
-            total_active += 1
-            total_difficulty += agent.difficulty
-
-    avg_difficulty = total_difficulty / total_active if total_active > 0 else 0
-
-    lines = ["📈 WebApp Agent 会话统计\n"]
-    lines.append(f"🟢 当前活跃: {total_active} 个")
-    lines.append(f"📊 平均难度: {avg_difficulty:.1f}/10")
-    lines.append(f"📜 历史完成: {len(registry.completed_agents)} 个")
-
-    if status_counts:
-        lines.append("")
-        lines.append("📋 状态分布:")
-        for status, count in sorted(status_counts.items()):
-            lines.append(f"   {status}: {count}")
-
-    await finish_with(matcher, message="\n".join(lines))
-
-
-@on_command("webapp_cancel", aliases={"webapp-cancel", "wa_cancel", "wa-cancel"}, priority=5, block=True).handle()
-async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
-    """取消指定 Agent"""
-    _username, cmd_content, chat_key, _chat_type = await command_guard(event, bot, arg, matcher)
-
-    if not cmd_content:
-        await finish_with(matcher, message="请指定 Agent ID，如: webapp-cancel WEB-a3f8")
+    if not cmd:
+        await finish_with(
+            matcher,
+            message="❌ 请指定 Agent ID\n用法: wa_cancel <ID> [原因]",
+        )
         return
 
-    # 解析参数：agent_id [reason]
-    parts = cmd_content.strip().split(maxsplit=1)
+    parts = cmd.strip().split(maxsplit=1)
     agent_id = parts[0]
     reason = parts[1] if len(parts) > 1 else "管理员取消"
 
     agent = await get_agent(agent_id, chat_key)
     if not agent:
-        await finish_with(matcher, message=f"Agent {agent_id} 不存在")
+        await finish_with(matcher, message=f"❌ Agent {agent_id} 不存在")
         return
 
     if not agent.is_active():
-        await finish_with(matcher, message=f"Agent {agent_id} 已不在活跃状态 ({agent.status.value})")
+        await finish_with(
+            matcher,
+            message=f"⚠️ Agent {agent_id} 已结束 ({agent.status.value})",
+        )
         return
 
-    # 取消 Agent
-    cancelled = await cancel_agent(agent_id, chat_key, reason)
-    if cancelled:
-        msg = f"✅ Agent [{agent_id}] 已取消\n原因: {reason}"
-        if cancelled.deployed_url:
-            msg += f"\n已部署的页面仍可访问: {cancelled.deployed_url}"
-        await finish_with(matcher, message=msg)
-    else:
-        await finish_with(matcher, message=f"❌ 取消 Agent {agent_id} 失败")
+    # 取消该 Agent 及其所有子 Agent
+    cancelled = [agent_id]
+    for child_id in agent.children_ids:
+        await cancel_agent_task(child_id, chat_key, "父Agent取消")
+        cancelled.append(child_id)
+
+    await cancel_agent_task(agent_id, chat_key, reason)
+
+    msg_lines = [
+        f"✅ 已取消 {len(cancelled)} 个 Agent",
+        "━━━━━━━━━━━━━━━━━━━━━",
+        f"🚫 {' → '.join(cancelled)}",
+        f"📝 原因: {reason}",
+    ]
+    if agent.deployed_url:
+        msg_lines.append(f"🔗 页面仍可访问: {agent.deployed_url}")
+
+    await finish_with(matcher, message="\n".join(msg_lines))
 
 
-@on_command("webapp_history", aliases={"webapp-history", "wa_history", "wa-history"}, priority=5, block=True).handle()
-async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
-    """查看历史完成任务"""
-    _username, cmd_content, chat_key, _chat_type = await command_guard(event, bot, arg, matcher)
+@on_command(
+    "webapp_recompile",
+    aliases={"webapp-recompile", "wa_recompile", "wa-recompile", "wa_build"},
+    priority=5,
+    block=True,
+).handle()
+async def _(
+    matcher: Matcher,
+    event: MessageEvent,
+    bot: Bot,
+    arg: Message = CommandArg(),
+):
+    """(高级) 重新编译 Agent"""
+    _, cmd, chat_key, _ = await command_guard(event, bot, arg, matcher)
 
-    registry = await get_chat_registry(chat_key)
-
-    if not registry.completed_agents:
-        await finish_with(matcher, message="当前会话没有已完成的历史任务")
+    if not cmd:
+        await finish_with(
+            matcher,
+            message="❌ 请指定 Agent ID\n用法: wa_recompile <ID>",
+        )
         return
 
-    # 解析页码
+    agent_id = cmd.strip()
+    await matcher.send(f"🔨 正在重新编译 Agent[{agent_id}] 产物...")
+
+    from .services.agent_runner import recompile_agent
+
+    result = await recompile_agent(agent_id, chat_key)
+    await finish_with(matcher, message=result)
+
+
+@on_command(
+    "webapp_help",
+    aliases={"webapp-help", "wa_help", "wa-help"},
+    priority=5,
+    block=True,
+).handle()
+async def _(
+    matcher: Matcher,
+    event: MessageEvent,
+    bot: Bot,
+    arg: Message = CommandArg(),
+):
+    """帮助"""
+    _, cmd, _, _ = await command_guard(event, bot, arg, matcher)
+
+    show_advanced = cmd.strip() in ("-v", "--verbose", "--advanced", "-a")
+
+    msg = """🌐 WebApp 命令帮助
+
+📋 查看
+  wa_list → 列出活跃 Agent
+  wa_list -v → 详细树状展示
+  wa_info <ID> → 查看单个详情
+  wa_info <ID> -v → 完整信息
+
+⚙️ 管理
+  wa_cancel <ID> [原因]
+  取消 Agent 及其所有子 Agent
+
+🎨 状态图例
+  🔵 运行中  🟡 等待用户
+  🟢 已完成  🔴 失败
+  ⚪ 待命    ⚫ 已取消"""
+
+    if show_advanced:
+        msg += """
+
+🔧 高级命令
+  wa_recompile <ID>
+  手动触发重新编译和部署 (仅限根节点)"""
+    await finish_with(matcher, message=msg)
+
+
+@on_command(
+    "webapp_deps",
+    aliases={"webapp-deps", "wa_deps", "wa-deps"},
+    priority=5,
+    block=True,
+).handle()
+async def _(
+    matcher: Matcher,
+    event: MessageEvent,
+    bot: Bot,
+    arg: Message = CommandArg(),
+):
+    """查看缺失依赖统计
+
+    用法: wa_deps [-p <page>] [-s <size>]
+    """
+    _, cmd, _, _ = await command_guard(event, bot, arg, matcher)
+
+    # 简单参数解析
     page = 1
-    if cmd_content and cmd_content.strip().isdigit():
-        page = int(cmd_content.strip())
+    page_size = 10
 
-    # 按完成时间排序（最新的在前）
-    sorted_agents = sorted(
-        registry.completed_agents.values(),
-        key=lambda x: x.complete_time or 0,
-        reverse=True,
-    )
+    parts = cmd.strip().split()
+    i = 0
+    while i < len(parts):
+        val = parts[i]
+        if val in ("-p", "--page") and i + 1 < len(parts):
+            try:
+                page = int(parts[i + 1])
+                i += 2
+                continue
+            except ValueError:
+                pass
+        if val in ("-s", "--size") and i + 1 < len(parts):
+            try:
+                page_size = int(parts[i + 1])
+                i += 2
+                continue
+            except ValueError:
+                pass
+        i += 1
 
-    page_size = 5
-    total = len(sorted_agents)
-    total_pages = (total + page_size - 1) // page_size
-    page = max(1, min(page, total_pages))
+    import json
 
-    start_idx = (page - 1) * page_size
-    end_idx = min(start_idx + page_size, total)
+    from .plugin import plugin
 
-    lines = [f"📜 历史完成任务 (第 {page}/{total_pages} 页)\n"]
+    store_key = "global_missing_dependencies"
+    data = await plugin.store.get(store_key=store_key)
 
-    for agent in sorted_agents[start_idx:end_idx]:
-        status_emoji = _get_status_emoji(agent.status)
-        html_size = f"{len(agent.current_html)}字符" if agent.current_html else "无"
-        lines.append(f"{status_emoji} [{agent.agent_id}] {agent.status.value}")
-        lines.append(f"   需求: {agent.requirement[:40]}...")
-        lines.append(f"   📄 HTML: {html_size}")
-        if agent.deployed_url:
-            lines.append(f"   🔗 {agent.deployed_url}")
+    if not data:
+        await finish_with(matcher, message="📭 当前没有记录到任何缺失的依赖。")
+        return
+
+    try:
+        loaded = json.loads(data)
+        if not loaded:
+            await finish_with(matcher, message="📭 当前没有记录到任何缺失的依赖。")
+            return
+
+        # 兼容旧列表格式
+        deps_dict = {}
+        if isinstance(loaded, list):
+            deps_dict = dict.fromkeys(loaded, 1)
+        elif isinstance(loaded, dict):
+            deps_dict = loaded
+
+        # 排序: 次数倒序
+        sorted_deps = sorted(deps_dict.items(), key=lambda x: x[1], reverse=True)
+
+        # 分页
+        total = len(sorted_deps)
+        total_pages = (total + page_size - 1) // page_size
+        page = max(1, min(page, total_pages))
+
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        page_items = sorted_deps[start_idx:end_idx]
+
+        if not page_items:
+            await finish_with(
+                matcher, message=f"⚠️ 第 {page} 页没有数据 (总共 {total} 条记录)",
+            )
+            return
+
+        lines = [
+            "📊 缺失依赖统计",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"总计: {total} 个 · 页码: {page}/{total_pages}",
+            "",
+        ]
+
+        for idx, (dep, count) in enumerate(page_items, start_idx + 1):
+            lines.append(f"{idx}. {dep} (失败 {count} 次)")
+
         lines.append("")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━")
+        if page < total_pages:
+            lines.append(f"💡 下一页: wa_deps -p {page + 1}")
 
-    if total_pages > 1:
-        lines.append("使用 webapp-history <页码> 查看其他页")
-
-    await finish_with(matcher, message="\n".join(lines))
-
-
-@on_command("webapp_clean", aliases={"webapp-clean", "wa_clean", "wa-clean"}, priority=5, block=True).handle()
-async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
-    """清理已完成/失败的 Agent"""
-    _username, _cmd_content, chat_key, _chat_type = await command_guard(event, bot, arg, matcher)
-
-    cleaned = await clean_completed_agents(chat_key)
-    await finish_with(matcher, message=f"🧹 已清理当前会话 {cleaned} 个已完成/失败/取消的 Agent 记录")
-
-
-@on_command("webapp_help", aliases={"webapp-help", "wa_help", "wa-help"}, priority=5, block=True).handle()
-async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
-    """显示帮助信息"""
-    await command_guard(event, bot, arg, matcher)
-
-    help_text = """📖 NekroWebApp x SubAgent 命令帮助
-
-🔹 查看命令:
-   webapp_list    - 列出当前会话活跃的 Agent
-   webapp_info <ID> - 查看指定 Agent 详情
-   webapp_stats   - 查看会话统计信息
-   webapp_history [页码] - 查看历史完成任务
-
-🔹 管理命令:
-   webapp_cancel <ID> [原因] - 取消指定 Agent
-   webapp_clean   - 清理已完成的 Agent 记录
-
-🔹 示例:
-   webapp_info WEB-a3f8
-   webapp_cancel WEB-a3f8 用户取消
-
-🔹 贴士
-   1. `webapp` 可简写为 `wa`
-   """
-
-    await finish_with(matcher, message=help_text)
+        await finish_with(matcher, message="\n".join(lines))
+    except Exception as e:
+        await finish_with(matcher, message=f"❌ 读取记录失败: {e}")

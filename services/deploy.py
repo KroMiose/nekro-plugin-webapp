@@ -3,6 +3,7 @@
 负责将 HTML 内容部署到 Cloudflare Worker。
 """
 
+import asyncio
 from typing import Dict, Optional
 
 import httpx
@@ -64,6 +65,11 @@ async def deploy_html_to_worker(
     worker_url = config.WORKER_URL.rstrip("/")
     api_url = f"{worker_url}/api/pages"
 
+    # 确保 description 非空
+    if not description or not description.strip():
+        description = title or "WebApp Page"
+        logger.debug(f"description 为空，使用默认值: {description}")
+
     request_data = CreatePageRequest(
         title=title,
         description=description,
@@ -71,31 +77,43 @@ async def deploy_html_to_worker(
         expires_in_days=expires_in_days,
     )
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                api_url,
-                json=request_data.model_dump(),
-                headers={
-                    "Authorization": f"Bearer {config.ACCESS_KEY}",
-                },
-            )
+    max_retries = 3
+    base_delay = 1.0
 
-            if response.status_code in (200, 201):
-                data = response.json()
-                result = CreatePageResponse.model_validate(data)
-                logger.info(f"部署成功: {result.url}")
-                return result.url
+    for attempt in range(max_retries):
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    api_url,
+                    json=request_data.model_dump(),
+                    headers={
+                        "Authorization": f"Bearer {config.ACCESS_KEY}",
+                    },
+                )
 
-            logger.error(f"部署失败: HTTP {response.status_code}, {response.text}")
-            return None
+                if response.status_code in (200, 201):
+                    data = response.json()
+                    result = CreatePageResponse.model_validate(data)
+                    logger.info(f"部署成功: {result.url}")
+                    return result.url
 
-    except httpx.TimeoutException:
-        logger.error("部署超时")
-        return None
-    except Exception as e:
-        logger.exception(f"部署异常: {e}")
-        return None
+                logger.warning(
+                    f"部署尝试 {attempt + 1}/{max_retries} 失败: HTTP {response.status_code}, {response.text}",
+                )
+
+        except httpx.TimeoutException:
+            logger.warning(f"部署尝试 {attempt + 1}/{max_retries} 超时")
+        except Exception as e:
+            logger.warning(f"部署尝试 {attempt + 1}/{max_retries} 异常: {e}")
+
+        # 如果不是最后一次尝试，等待后重试
+        if attempt < max_retries - 1:
+            delay = base_delay * (2**attempt)
+            logger.info(f"等待 {delay}秒后重试...")
+            await asyncio.sleep(delay)
+
+    logger.error("部署最终失败")
+    return None
 
 
 async def check_worker_health() -> bool:
