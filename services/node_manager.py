@@ -22,7 +22,7 @@ _CACHED_NODE_PATH: Optional[str] = None
 _INIT_LOCK = asyncio.Lock()
 
 
-def _get_node_dist_name(tracer: Optional["TaskTracer"] = None, agent_id: str = "UNKNOWN") -> str:
+def _get_node_dist_name(tracer: "TaskTracer", agent_id: str = "UNKNOWN") -> str:
     """Detect appropriate Node.js distribution for current platform"""
     system = platform.system().lower()
     machine = platform.machine().lower()
@@ -34,10 +34,7 @@ def _get_node_dist_name(tracer: Optional["TaskTracer"] = None, agent_id: str = "
     else:
         # Fallback to linux if unknown (e.g. running in wsl but reporting funny?)
         # Or raise error if strict. For plugins, best effort.
-        if tracer:
-            tracer.log_event("NODE_UNKNOWN_SYS", agent_id, f"Unknown system '{system}', defaulting to linux")
-        else:
-            logger.warning(f"[WebDev] Unknown system '{system}', defaulting to linux")
+        tracer.log_event(tracer.EVENT.NODE_UNKNOWN_SYS, agent_id, f"Unknown system '{system}', defaulting to linux")
         os_name = "linux"
 
     if machine in ("x86_64", "amd64"):
@@ -45,10 +42,7 @@ def _get_node_dist_name(tracer: Optional["TaskTracer"] = None, agent_id: str = "
     elif machine in ("aarch64", "arm64"):
         arch = "arm64"
     else:
-        if tracer:
-            tracer.log_event("NODE_UNKNOWN_ARCH", agent_id, f"Unknown architecture '{machine}', defaulting to x64")
-        else:
-            logger.warning(f"[WebDev] Unknown architecture '{machine}', defaulting to x64")
+        tracer.log_event(tracer.EVENT.NODE_UNKNOWN_ARCH, agent_id, f"Unknown architecture '{machine}', defaulting to x64")
         arch = "x64"
 
     return f"node-{NODE_VERSION}-{os_name}-{arch}"
@@ -80,17 +74,12 @@ def _get_system_node() -> Optional[str]:
     return None
 
 
-async def _download_and_extract_node(target_dir: Path, tracer: Optional["TaskTracer"] = None, agent_id: str = "UNKNOWN"):
+async def _download_and_extract_node(target_dir: Path, tracer: "TaskTracer", agent_id: str = "UNKNOWN"):
     """Download Node.js binary and extract it"""
     dist_name = _get_node_dist_name(tracer, agent_id)
     download_url = f"https://nodejs.org/dist/{NODE_VERSION}/{dist_name}.tar.xz"
 
-    if tracer:
-        tracer.log_event("NODE_DOWNLOAD", agent_id, f"Downloading Node.js {NODE_VERSION} ({dist_name})...")
-    else:
-        logger.info(
-            f"[WebDev] Downloading Node.js {NODE_VERSION} ({dist_name})...",
-        )
+    tracer.log_event(tracer.EVENT.NODE_DOWNLOAD, agent_id, f"Downloading Node.js {NODE_VERSION} ({dist_name})...")
 
     tar_path = target_dir / f"{dist_name}.tar.xz"
     extract_temp = target_dir / "temp_extract"
@@ -106,10 +95,7 @@ async def _download_and_extract_node(target_dir: Path, tracer: Optional["TaskTra
             lambda: urllib.request.urlretrieve(download_url, tar_path),
         )
 
-        if tracer:
-            tracer.log_event("NODE_EXTRACT", agent_id, "Extracting Node.js...")
-        else:
-            logger.info("[WebDev] Extracting Node.js...")
+        tracer.log_event(tracer.EVENT.NODE_EXTRACT, agent_id, "Extracting Node.js...")
 
         def extract():
             with tarfile.open(tar_path, "r:xz") as tar:
@@ -136,10 +122,7 @@ async def _download_and_extract_node(target_dir: Path, tracer: Optional["TaskTra
         tar_path.unlink()
         shutil.rmtree(extract_temp)
 
-        if tracer:
-            tracer.log_event("NODE_INSTALLED", agent_id, "Node.js installed successfully.")
-        else:
-            logger.info("[WebDev] Node.js installed successfully.")
+        tracer.log_event(tracer.EVENT.NODE_INSTALLED, agent_id, "Node.js installed successfully.")
 
     except Exception as e:
         # Cleanup on failure
@@ -154,7 +137,7 @@ async def _download_and_extract_node(target_dir: Path, tracer: Optional["TaskTra
         ) from e
 
 
-async def get_node_executable(tracer: Optional["TaskTracer"] = None, agent_id: str = "UNKNOWN") -> str:
+async def get_node_executable(tracer: "TaskTracer", agent_id: str = "UNKNOWN") -> str:
     """Get the path to a usable Node.js executable.
 
     Priority:
@@ -193,12 +176,7 @@ async def get_node_executable(tracer: Optional["TaskTracer"] = None, agent_id: s
             return system_node
 
         # 3. Install Local
-        if tracer:
-            tracer.log_event("NODE_MISSING", agent_id, "Node.js not found in system. Installing standalone runtime...")
-        else:
-            logger.info(
-                "[WebDev] Node.js not found in system. Installing standalone runtime...",
-            )
+        tracer.log_event(tracer.EVENT.NODE_MISSING, agent_id, "Node.js not found in system. Installing standalone runtime...")
         await _download_and_extract_node(local_node_dir, tracer, agent_id)
 
         if local_node_bin.exists():

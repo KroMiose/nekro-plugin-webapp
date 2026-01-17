@@ -98,6 +98,7 @@ process.stdin.on('end', async () => {
             target: ['es2020'],
             outfile: 'bundle.js',
             plugins: [virtualFsPlugin],
+            jsx: 'automatic', // 使用新的 JSX 转换
             write: false,
             external: ['react', 'react-dom', 'react-dom/client'],
             define: {

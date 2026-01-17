@@ -3,918 +3,577 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebApp 智能体群协作平台 - 动态 AI 团队协作开发</title>
-    <meta name="description" content="智能体群动态协作系统：AI 自主组建团队，按需创建专业 Agent，从编码到审查自动完成。">
-    <meta name="keywords" content="智能体群,Multi-Agent,动态协作,NekroAgent,AI开发,Cloudflare Workers">
-    <meta property="og:title" content="智能体群协作平台">
-    <meta property="og:description" content="AI 自主组建协作团队，动态创建专业 Agent">
-    <meta property="og:type" content="website">
+    <title>Nekro WebApp | AI-Powered Web Development</title>
+    <meta name="description" content="NekroAgent 官方 Web 开发插件 - 让 AI 拥有完整的前端开发能力">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
         :root {
-            --bg-dark: #0a0a0f;
-            --bg-card: rgba(255, 255, 255, 0.03);
-            --bg-card-hover: rgba(255, 255, 255, 0.06);
-            --border: rgba(255, 255, 255, 0.08);
-            --text-primary: #f0f0f5;
-            --text-secondary: #9ca3af;
+            --bg: #050505;
+            --surface: #0a0a0a;
+            --surface-elevated: #111;
+            --border: #222;
+            --border-hover: #333;
+            --text-primary: #ededed;
+            --text-secondary: #888;
+            --text-muted: #555;
+            
             --accent-purple: #a855f7;
             --accent-blue: #3b82f6;
             --accent-green: #22c55e;
             --accent-orange: #f97316;
-            --accent-pink: #ec4899;
-            --accent-cyan: #06b6d4;
-            --accent-yellow: #eab308;
-            --gradient-main: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #0f1628 100%);
-            --gradient-accent: linear-gradient(135deg, #a855f7 0%, #3b82f6 100%);
-            --glass: rgba(255, 255, 255, 0.04);
-            --glass-border: rgba(255, 255, 255, 0.08);
         }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--bg-dark);
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
             color: var(--text-primary);
             line-height: 1.6;
-            min-height: 100vh;
             overflow-x: hidden;
+            min-height: 100vh;
         }
-        
-        /* 背景效果 */
-        .bg-animation {
+
+        /* Ambient Background */
+        .ambient {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            inset: 0;
             z-index: -1;
-            background: var(--gradient-main);
+            pointer-events: none;
+            overflow: hidden;
         }
         
-        .bg-animation::before {
+        .ambient::before {
             content: '';
             position: absolute;
-            width: 200%;
-            height: 200%;
-            top: -50%;
-            left: -50%;
-            background: 
-                radial-gradient(circle at 25% 25%, rgba(168, 85, 247, 0.12) 0%, transparent 40%),
-                radial-gradient(circle at 75% 75%, rgba(59, 130, 246, 0.10) 0%, transparent 40%);
-            animation: bgFloat 25s ease-in-out infinite;
+            top: -30%; left: 50%;
+            width: 800px; height: 600px;
+            background: radial-gradient(ellipse, rgba(168, 85, 247, 0.08), transparent 70%);
+            transform: translateX(-50%);
         }
         
-        @keyframes bgFloat {
-            0%, 100% { transform: translate(0, 0) scale(1); }
-            50% { transform: translate(2%, 2%) scale(1.02); }
+        .ambient::after {
+            content: '';
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border), transparent);
         }
-        
-        /* Header */
-        .header {
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        /* ===== Hero ===== */
+        .hero {
+            padding: 5rem 0 4rem;
             text-align: center;
-            padding: 4rem 1.5rem 2rem;
         }
-        
+
         .logo {
-            font-size: 4rem;
-            margin-bottom: 1rem;
-            display: inline-block;
-            animation: pulse 3s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-        }
-        
-        .header h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-            background: var(--gradient-accent);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 0.5rem;
-        }
-        
-        .header .subtitle {
-            font-size: 1.1rem;
-            color: var(--text-secondary);
-            max-width: 650px;
-            margin: 0 auto 1.5rem;
-        }
-        
-        .badge-row {
-            display: flex;
-            justify-content: center;
-            gap: 0.75rem;
-            flex-wrap: wrap;
-        }
-        
-        .badge {
             display: inline-flex;
             align-items: center;
-            gap: 0.4rem;
-            padding: 0.4rem 1rem;
-            border-radius: 50px;
+            gap: 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
             font-size: 0.8rem;
-            font-weight: 500;
-        }
-        
-        .badge.green {
-            background: rgba(34, 197, 94, 0.15);
-            border: 1px solid rgba(34, 197, 94, 0.3);
-            color: var(--accent-green);
-        }
-        
-        .badge.purple {
-            background: rgba(168, 85, 247, 0.15);
-            border: 1px solid rgba(168, 85, 247, 0.3);
-            color: var(--accent-purple);
-        }
-        
-        .badge .dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: currentColor;
-            animation: blink 2s ease-in-out infinite;
-        }
-        
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-        
-        /* Container */
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 1.5rem 3rem;
-        }
-        
-        /* Section */
-        .section {
-            background: var(--glass);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid var(--glass-border);
-            border-radius: 20px;
-            padding: 2rem;
+            color: var(--text-secondary);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 0.5rem 1rem;
+            border-radius: 99px;
             margin-bottom: 2rem;
         }
         
-        .section-title {
-            font-size: 1.4rem;
-            font-weight: 600;
-            margin-bottom: 1.25rem;
-            display: flex;
-            align-items: center;
-            gap: 0.6rem;
+        .logo-dot {
+            width: 6px; height: 6px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
         }
         
-        /* ==================== 核心动画区域 ==================== */
-        .workflow-section {
-            background: linear-gradient(180deg, rgba(168, 85, 247, 0.06) 0%, rgba(59, 130, 246, 0.04) 100%);
-            border: 1px solid rgba(168, 85, 247, 0.15);
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        h1 {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+        }
+        
+        h1 .gradient {
+            background: linear-gradient(135deg, #fff 0%, #a855f7 50%, #3b82f6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .tagline {
+            font-size: 1.15rem;
+            color: var(--text-secondary);
+            max-width: 560px;
+            margin: 0 auto 2.5rem;
+        }
+        
+        .tagline strong {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        /* ===== Stats Bar ===== */
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 3rem;
+            margin-bottom: 4rem;
+            flex-wrap: wrap;
+        }
+        
+        .stat {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 0.25rem;
+        }
+
+        /* ===== Flow Visualization ===== */
+        .flow-section {
+            margin-bottom: 5rem;
+        }
+
+        .section-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+
+        .flow-container {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 3rem 2rem;
             position: relative;
             overflow: hidden;
         }
         
-        /* 中央舞台 */
-        .stage {
-            position: relative;
-            padding: 2rem 0;
-            min-height: 420px;
-        }
-        
-        /* Architect 核心 */
-        .architect-core {
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            z-index: 10;
-        }
-        
-        .architect-node {
-            background: linear-gradient(135deg, rgba(168, 85, 247, 0.25) 0%, rgba(59, 130, 246, 0.25) 100%);
-            border: 2px solid var(--accent-purple);
-            border-radius: 20px;
-            padding: 1.5rem 2.5rem;
-            text-align: center;
-            position: relative;
-            box-shadow: 0 0 40px rgba(168, 85, 247, 0.2);
-            animation: coreGlow 4s ease-in-out infinite;
-        }
-        
-        @keyframes coreGlow {
-            0%, 100% { box-shadow: 0 0 40px rgba(168, 85, 247, 0.2); }
-            50% { box-shadow: 0 0 60px rgba(168, 85, 247, 0.35); }
-        }
-        
-        .architect-node .emoji {
-            font-size: 3rem;
-            margin-bottom: 0.5rem;
-            display: block;
-        }
-        
-        .architect-node .title {
-            font-size: 1.3rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-        }
-        
-        .architect-node .role {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-        }
-        
-        /* 思考气泡 */
-        .thought-bubble {
-            position: absolute;
-            top: -65px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(168, 85, 247, 0.95);
-            color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 12px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            white-space: nowrap;
-            opacity: 0;
-            animation: thoughtCycle 12s ease-in-out infinite;
-        }
-        
-        .thought-bubble::after {
+        .flow-container::before {
             content: '';
             position: absolute;
-            bottom: -8px;
-            left: 50%;
-            transform: translateX(-50%);
-            border-left: 8px solid transparent;
-            border-right: 8px solid transparent;
-            border-top: 8px solid rgba(168, 85, 247, 0.95);
-        }
-        
-        @keyframes thoughtCycle {
-            0%, 100% { opacity: 0; transform: translateX(-50%) translateY(5px); }
-            5%, 20% { opacity: 1; transform: translateX(-50%) translateY(0); }
-            25%, 30% { opacity: 0; transform: translateX(-50%) translateY(-5px); }
-        }
-        
-        .thought-bubble.t1 { animation-delay: 0s; }
-        .thought-bubble.t2 { animation-delay: 4s; }
-        .thought-bubble.t3 { animation-delay: 8s; }
-        
-        /* 动态子 Agent 容器 */
-        .dynamic-agents {
-            display: flex;
-            justify-content: center;
-            gap: 3rem;
-            margin-top: 3rem;
-            flex-wrap: wrap;
-            position: relative;
-        }
-        
-        /* 连接线 */
-        .connection-lines {
-            position: absolute;
-            top: 0;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 300px;
-            height: 60px;
+            inset: 0;
+            background: linear-gradient(180deg, rgba(168, 85, 247, 0.02), transparent 50%);
             pointer-events: none;
         }
-        
-        .connection-lines::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 50%;
-            width: 2px;
-            height: 20px;
-            background: var(--accent-purple);
-            opacity: 0.4;
+
+        .flow {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        .flow-node {
+            flex: 0 0 auto;
+            width: 160px;
+            text-align: center;
+        }
+
+        .flow-icon {
+            width: 56px; height: 56px;
+            margin: 0 auto 1rem;
+            background: var(--surface-elevated);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            transition: all 0.3s;
         }
         
-        .connection-lines::after {
-            content: '';
-            position: absolute;
-            top: 20px;
-            left: 50px;
-            right: 50px;
+        .flow-node:hover .flow-icon {
+            border-color: var(--border-hover);
+            transform: translateY(-2px);
+        }
+
+        .flow-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .flow-desc {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .flow-arrow {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
             height: 2px;
-            background: linear-gradient(90deg, var(--accent-green) 0%, var(--accent-purple) 50%, var(--accent-orange) 100%);
-            opacity: 0.4;
+            margin: 0 0.5rem;
         }
         
-        /* 子 Agent 节点 */
-        .sub-agent {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 1.25rem 1.5rem;
-            text-align: center;
-            min-width: 150px;
-            position: relative;
-            transition: all 0.4s ease;
-            animation: fadeInUp 0.6s ease-out forwards;
-            opacity: 0;
-        }
-        
-        .sub-agent:nth-child(2) { animation-delay: 0.3s; }
-        .sub-agent:nth-child(3) { animation-delay: 0.5s; }
-        
-        @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .sub-agent.engineer {
-            border-color: var(--accent-green);
-            background: linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(6, 182, 212, 0.08) 100%);
-        }
-        
-        .sub-agent.creator {
-            border-color: var(--accent-orange);
-            background: linear-gradient(135deg, rgba(249, 115, 22, 0.1) 0%, rgba(236, 72, 153, 0.08) 100%);
-        }
-        
-        .sub-agent .emoji {
-            font-size: 2rem;
-            margin-bottom: 0.4rem;
-            display: block;
-        }
-        
-        .sub-agent .name {
-            font-weight: 600;
-            font-size: 0.9rem;
-            margin-bottom: 0.2rem;
-        }
-        
-        .sub-agent .task {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-        }
-        
-        /* 按需创建标识 */
-        .on-demand-badge {
+        .flow-arrow::before {
+            content: '';
             position: absolute;
-            top: -10px;
-            right: -10px;
-            background: var(--accent-yellow);
-            color: #000;
-            font-size: 0.65rem;
-            font-weight: 700;
-            padding: 0.2rem 0.5rem;
-            border-radius: 8px;
-            animation: sparkle 2s ease-in-out infinite;
+            inset: 0;
+            background: linear-gradient(90deg, var(--border), var(--border-hover), var(--border));
         }
         
-        @keyframes sparkle {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.8; transform: scale(1.05); }
-        }
-        
-        /* Reviewer 区域 */
-        .reviewer-section {
-            margin-top: 2.5rem;
-            display: flex;
-            justify-content: center;
-        }
-        
-        .reviewer-node {
-            background: linear-gradient(135deg, rgba(236, 72, 153, 0.15) 0%, rgba(168, 85, 247, 0.1) 100%);
-            border: 1px solid var(--accent-pink);
-            border-radius: 16px;
-            padding: 1rem 2rem;
-            text-align: center;
-            position: relative;
-        }
-        
-        .reviewer-node .emoji {
-            font-size: 1.8rem;
-            margin-right: 0.5rem;
-        }
-        
-        .reviewer-node .title {
-            font-weight: 600;
-            display: inline;
-        }
-        
-        /* 审查循环箭头 */
-        .review-loop {
+        .flow-arrow::after {
+            content: '';
             position: absolute;
-            top: -40px;
-            right: -80px;
-            width: 80px;
-            height: 80px;
-            border: 2px dashed var(--accent-pink);
-            border-radius: 0 50px 50px 0;
-            border-left: none;
-            opacity: 0.4;
+            right: 0;
+            border: 4px solid transparent;
+            border-left-color: var(--border-hover);
         }
-        
-        .review-loop::after {
-            content: '↺';
+
+        /* Data Pulse Animation */
+        .flow-pulse {
             position: absolute;
-            top: 50%;
-            left: -15px;
-            transform: translateY(-50%);
-            font-size: 1.2rem;
-            color: var(--accent-pink);
-        }
-        
-        /* VFS 文件系统可视化 */
-        .vfs-container {
-            margin-top: 2rem;
-            padding-top: 2rem;
-            border-top: 1px solid var(--border);
-        }
-        
-        .vfs-title {
-            font-size: 0.9rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            color: var(--text-secondary);
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        
-        .vfs-tree {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-        }
-        
-        .vfs-file {
-            background: rgba(59, 130, 246, 0.1);
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            padding: 0.4rem 0.8rem;
-            border-radius: 8px;
-            font-size: 0.75rem;
-            font-family: 'Monaco', 'Menlo', monospace;
-            color: var(--accent-blue);
-            position: relative;
-            animation: fileAppear 0.5s ease-out forwards;
-            opacity: 0;
-        }
-        
-        .vfs-file:nth-child(1) { animation-delay: 0.1s; }
-        .vfs-file:nth-child(2) { animation-delay: 0.2s; }
-        .vfs-file:nth-child(3) { animation-delay: 0.3s; }
-        .vfs-file:nth-child(4) { animation-delay: 0.4s; }
-        .vfs-file:nth-child(5) { animation-delay: 0.5s; }
-        
-        @keyframes fileAppear {
-            from { opacity: 0; transform: scale(0.8); }
-            to { opacity: 1; transform: scale(1); }
-        }
-        
-        .vfs-file .author {
-            position: absolute;
-            top: -8px;
-            right: -5px;
-            font-size: 0.65rem;
-            background: var(--bg-dark);
-            padding: 0 0.3rem;
-            border-radius: 4px;
-        }
-        
-        .vfs-file .author.architect { color: var(--accent-purple); }
-        .vfs-file .author.engineer { color: var(--accent-green); }
-        
-        /* 流程步骤 */
-        .workflow-steps {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 1rem;
-            margin-top: 1.5rem;
-        }
-        
-        .workflow-step {
-            display: flex;
-            align-items: flex-start;
-            gap: 0.6rem;
-        }
-        
-        .step-number {
-            width: 26px;
-            height: 26px;
+            top: 50%; left: 0;
+            width: 12px; height: 12px;
+            background: var(--accent-purple);
             border-radius: 50%;
-            background: var(--gradient-accent);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.75rem;
-            font-weight: 700;
-            flex-shrink: 0;
+            transform: translateY(-50%);
+            box-shadow: 0 0 20px var(--accent-purple);
+            opacity: 0;
+            animation: flowPulse 3s ease-in-out infinite;
         }
         
-        .step-content h4 {
-            font-size: 0.85rem;
-            font-weight: 600;
-            margin-bottom: 0.15rem;
-        }
+        .flow-arrow:nth-child(2) .flow-pulse { animation-delay: 0s; }
+        .flow-arrow:nth-child(4) .flow-pulse { animation-delay: 0.8s; background: var(--accent-blue); box-shadow: 0 0 20px var(--accent-blue); }
+        .flow-arrow:nth-child(6) .flow-pulse { animation-delay: 1.6s; background: var(--accent-green); box-shadow: 0 0 20px var(--accent-green); }
         
-        .step-content p {
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-            margin: 0;
+        @keyframes flowPulse {
+            0% { left: 0; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { left: 100%; opacity: 0; }
         }
-        
-        /* ==================== 特性卡片 ==================== */
-        .features-grid {
+
+        /* ===== Features Grid ===== */
+        .features {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 1rem;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.25rem;
+            margin-bottom: 5rem;
         }
-        
-        .feature-card {
-            background: var(--bg-card);
+
+        .feature {
+            background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 1.25rem;
-            transition: all 0.3s ease;
+            border-radius: 16px;
+            padding: 1.5rem;
+            transition: all 0.25s;
         }
         
-        .feature-card:hover {
-            background: var(--bg-card-hover);
-            border-color: var(--accent-purple);
-            transform: translateY(-3px);
+        .feature:hover {
+            border-color: var(--border-hover);
+            transform: translateY(-2px);
         }
-        
-        .feature-card .icon {
-            font-size: 1.8rem;
-            margin-bottom: 0.75rem;
-            display: block;
-        }
-        
-        .feature-card h3 {
-            font-size: 1rem;
-            font-weight: 600;
-            margin-bottom: 0.4rem;
-        }
-        
-        .feature-card p {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            margin: 0;
-        }
-        
-        /* ==================== API ==================== */
-        .api-grid {
-            display: grid;
-            gap: 0.6rem;
-        }
-        
-        .api-item {
+
+        .feature-header {
             display: flex;
             align-items: center;
             gap: 0.75rem;
-            padding: 0.75rem 1rem;
-            background: var(--bg-card);
+            margin-bottom: 0.75rem;
+        }
+
+        .feature-icon {
+            font-size: 1.25rem;
+        }
+
+        .feature h3 {
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .feature p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        /* ===== Tech Stack ===== */
+        .tech-section {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .tech-grid {
+            display: flex;
+            justify-content: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin-top: 1.5rem;
+        }
+
+        .tech-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 10px;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
             transition: all 0.2s;
         }
         
-        .api-item:hover {
-            background: var(--bg-card-hover);
-        }
-        
-        .api-method {
-            padding: 0.2rem 0.6rem;
-            border-radius: 5px;
-            font-size: 0.7rem;
-            font-weight: 700;
-            font-family: 'Monaco', 'Menlo', monospace;
-            min-width: 55px;
-            text-align: center;
-        }
-        
-        .api-method.get { background: rgba(34, 197, 94, 0.2); color: var(--accent-green); }
-        .api-method.post { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); }
-        .api-method.delete { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-        
-        .api-path {
-            font-family: 'Monaco', 'Menlo', monospace;
-            font-size: 0.85rem;
-        }
-        
-        .api-desc {
-            margin-left: auto;
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-        }
-        
-        /* ==================== 链接 ==================== */
-        .link-grid {
-            display: flex;
-            gap: 0.75rem;
-            flex-wrap: wrap;
-            margin-top: 1rem;
-        }
-        
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.75rem 1.25rem;
-            border-radius: 10px;
-            font-weight: 600;
-            font-size: 0.85rem;
-            text-decoration: none;
-            transition: all 0.3s ease;
-        }
-        
-        .btn-primary {
-            background: var(--gradient-accent);
-            color: white;
-        }
-        
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(168, 85, 247, 0.25);
-        }
-        
-        .btn-secondary {
-            background: var(--bg-card);
+        .tech-badge:hover {
+            border-color: var(--border-hover);
             color: var(--text-primary);
-            border: 1px solid var(--border);
+        }
+
+        /* ===== Footer ===== */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 2.5rem 0;
         }
         
-        .btn-secondary:hover {
-            background: var(--bg-card-hover);
-            border-color: var(--accent-purple);
+        .footer-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
-        
-        /* ==================== Footer ==================== */
-        .footer {
-            text-align: center;
-            padding: 2.5rem 1.5rem;
-            color: var(--text-secondary);
+
+        .footer-brand {
             font-size: 0.85rem;
+            color: var(--text-secondary);
         }
         
-        .footer a {
-            color: var(--accent-purple);
-            text-decoration: none;
+        .footer-brand strong {
+            color: var(--text-primary);
+            font-weight: 500;
         }
-        
-        .footer a:hover {
-            color: var(--accent-blue);
-        }
-        
+
         .footer-links {
             display: flex;
-            justify-content: center;
             gap: 1.5rem;
-            margin-bottom: 0.75rem;
         }
         
-        /* ==================== 响应式 ==================== */
+        .footer-links a {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        
+        .footer-links a:hover {
+            color: var(--text-primary);
+        }
+
+        /* ===== Responsive ===== */
         @media (max-width: 768px) {
-            .header h1 { font-size: 1.8rem; }
-            .logo { font-size: 3rem; }
-            .section { padding: 1.5rem; }
-            .dynamic-agents { gap: 1.5rem; }
-            .connection-lines { display: none; }
-            .thought-bubble { display: none; }
-            .review-loop { display: none; }
-            .sub-agent { min-width: 130px; }
-            .api-desc { display: none; }
+            .flow {
+                flex-direction: column;
+                gap: 1rem;
+            }
+            
+            .flow-arrow {
+                width: 2px;
+                height: 40px;
+                margin: 0.5rem 0;
+            }
+            
+            .flow-arrow::before {
+                background: linear-gradient(180deg, var(--border), var(--border-hover), var(--border));
+            }
+            
+            .flow-arrow::after {
+                right: auto;
+                bottom: 0;
+                border: 4px solid transparent;
+                border-top-color: var(--border-hover);
+            }
+            
+            .flow-pulse {
+                top: 0; left: 50%;
+                transform: translateX(-50%);
+                animation: flowPulseVert 3s ease-in-out infinite;
+            }
+            
+            @keyframes flowPulseVert {
+                0% { top: 0; opacity: 0; }
+                10% { opacity: 1; }
+                90% { opacity: 1; }
+                100% { top: 100%; opacity: 0; }
+            }
+            
+            .stats { gap: 2rem; }
+            .footer-content { flex-direction: column; text-align: center; }
         }
     </style>
 </head>
 <body>
-    <div class="bg-animation"></div>
+    <div class="ambient"></div>
     
-    <header class="header">
-        <div class="logo">🤖</div>
-        <h1>智能体群协作平台</h1>
-        <p class="subtitle">AI 自主组建协作团队，按需动态创建专业 Agent<br>从代码编写到审查部署，全程自动化完成</p>
-        <div class="badge-row">
-            <span class="badge green"><span class="dot"></span>服务运行中</span>
-            <span class="badge purple">动态协作</span>
-        </div>
-    </header>
-    
-    <main class="container">
-        <!-- 核心：智能体群动态协作 -->
-        <section class="section workflow-section">
-            <h2 class="section-title">
-                <span>🧠</span>
-                智能体群动态协作
-            </h2>
-            
-            <div class="stage">
-                <!-- 首席架构师 -->
-                <div class="architect-core">
-                    <!-- 思考气泡 -->
-                    <div class="thought-bubble t1">🤔 这个任务需要复杂图表，我需要召集工程师...</div>
-                    <div class="thought-bubble t2">✅ 简单任务，我自己就能完成</div>
-                    <div class="thought-bubble t3">🔧 审查失败了，让我组织修复方案...</div>
-                    
-                    <div class="architect-node">
-                        <span class="emoji">🧠</span>
-                        <div class="title">首席架构师</div>
-                        <div class="role">系统设计 · 核心编码 · 团队调度</div>
-                    </div>
-                    
-                    <!-- 动态子 Agent -->
-                    <div class="dynamic-agents">
-                        <div class="connection-lines"></div>
-                        
-                        <div class="sub-agent engineer">
-                            <span class="on-demand-badge">按需</span>
-                            <span class="emoji">⚙️</span>
-                            <div class="name">工程师</div>
-                            <div class="task">实现复杂组件</div>
-                        </div>
-                        
-                        <div class="sub-agent creator">
-                            <span class="on-demand-badge">按需</span>
-                            <span class="emoji">🎨</span>
-                            <div class="name">创作者</div>
-                            <div class="task">生成内容资源</div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Reviewer -->
-                <div class="reviewer-section">
-                    <div class="reviewer-node">
-                        <span class="emoji">🔍</span>
-                        <span class="title">代码审查 → 反馈给架构师</span>
-                        <div class="review-loop"></div>
-                    </div>
-                </div>
-                
-                <!-- VFS 可视化 -->
-                <div class="vfs-container">
-                    <div class="vfs-title">📁 VFS 共享文件系统 - 所有 Agent 协作的代码空间</div>
-                    <div class="vfs-tree">
-                        <div class="vfs-file">src/main.tsx<span class="author architect">A</span></div>
-                        <div class="vfs-file">src/App.tsx<span class="author architect">A</span></div>
-                        <div class="vfs-file">src/types.ts<span class="author architect">A</span></div>
-                        <div class="vfs-file">src/components/Chart.tsx<span class="author engineer">E</span></div>
-                        <div class="vfs-file">src/index.css<span class="author architect">A</span></div>
-                    </div>
-                </div>
+    <div class="container">
+        <div class="hero">
+            <div class="logo">
+                <span class="logo-dot"></span>
+                NEKRO WEBAPP v2.0
             </div>
             
-            <!-- 流程步骤 -->
-            <div class="workflow-steps">
-                <div class="workflow-step">
-                    <div class="step-number">1</div>
-                    <div class="step-content">
-                        <h4>需求评估</h4>
-                        <p>Architect 分析复杂度</p>
-                    </div>
-                </div>
-                <div class="workflow-step">
-                    <div class="step-number">2</div>
-                    <div class="step-content">
-                        <h4>自主决策</h4>
-                        <p>决定是否召集子 Agent</p>
-                    </div>
-                </div>
-                <div class="workflow-step">
-                    <div class="step-number">3</div>
-                    <div class="step-content">
-                        <h4>协作开发</h4>
-                        <p>代码写入共享 VFS</p>
-                    </div>
-                </div>
-                <div class="workflow-step">
-                    <div class="step-number">4</div>
-                    <div class="step-content">
-                        <h4>审查循环</h4>
-                        <p>失败反馈由 Architect 处理</p>
-                    </div>
-                </div>
-                <div class="workflow-step">
-                    <div class="step-number">5</div>
-                    <div class="step-content">
-                        <h4>全球部署</h4>
-                        <p>esbuild → CDN</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-        
-        <!-- 特性 -->
-        <section class="section">
-            <h2 class="section-title">
-                <span>✨</span>
-                核心特性
-            </h2>
+            <h1>
+                <span class="gradient">AI-Powered</span><br>
+                Web Development
+            </h1>
             
-            <div class="features-grid">
-                <div class="feature-card">
-                    <span class="icon">🧠</span>
-                    <h3>动态团队组建</h3>
-                    <p>Architect 自主评估任务，按需创建 Engineer 或 Creator 子 Agent</p>
-                </div>
-                
-                <div class="feature-card">
-                    <span class="icon">🔄</span>
-                    <h3>智能审查闭环</h3>
-                    <p>Reviewer 发现问题后反馈给 Architect，由其决定修复策略</p>
-                </div>
-                
-                <div class="feature-card">
-                    <span class="icon">📁</span>
-                    <h3>VFS 共享协作</h3>
-                    <p>所有 Agent 读写同一虚拟文件系统，实现无缝代码协作</p>
-                </div>
-                
-                <div class="feature-card">
-                    <span class="icon">⚡</span>
-                    <h3>秒级编译部署</h3>
-                    <p>本地 esbuild 编译，自动 Import Map，全球 CDN 加速</p>
-                </div>
-                
-                <div class="feature-card">
-                    <span class="icon">🎯</span>
-                    <h3>智能模型路由</h3>
-                    <p>根据任务难度自动选择模型，平衡效果与成本</p>
-                </div>
-                
-                <div class="feature-card">
-                    <span class="icon">🔒</span>
-                    <h3>安全权限分离</h3>
-                    <p>管理密钥与访问密钥独立，API 认证保护</p>
-                </div>
-            </div>
-        </section>
-        
-        <!-- API -->
-        <section class="section">
-            <h2 class="section-title">
-                <span>🔌</span>
-                API 接口
-            </h2>
-            
-            <div class="api-grid">
-                <div class="api-item">
-                    <span class="api-method get">GET</span>
-                    <span class="api-path">/api/health</span>
-                    <span class="api-desc">健康检查</span>
-                </div>
-                <div class="api-item">
-                    <span class="api-method post">POST</span>
-                    <span class="api-path">/api/pages</span>
-                    <span class="api-desc">创建页面</span>
-                </div>
-                <div class="api-item">
-                    <span class="api-method get">GET</span>
-                    <span class="api-path">/api/pages/{id}</span>
-                    <span class="api-desc">获取页面</span>
-                </div>
-                <div class="api-item">
-                    <span class="api-method delete">DELETE</span>
-                    <span class="api-path">/api/pages/{id}</span>
-                    <span class="api-desc">删除页面</span>
-                </div>
-            </div>
-        </section>
-        
-        <!-- 链接 -->
-        <section class="section">
-            <h2 class="section-title">
-                <span>🔗</span>
-                项目生态
-            </h2>
-            <p style="color: var(--text-secondary); margin-bottom: 0.75rem; font-size: 0.9rem;">
-                本服务是 <strong style="color: var(--text-primary);">NekroAgent</strong> 智能体框架的核心插件
+            <p class="tagline">
+                基于 <strong>Text-to-Tool Bridge</strong> 架构的智能开发环境。<br>
+                让 AI 拥有完整的前端编码、编译与部署能力。
             </p>
-            
-            <div class="link-grid">
-                <a href="https://github.com/KroMiose/nekro-agent" class="btn btn-primary" target="_blank" rel="noopener">
-                    📦 NekroAgent
-                </a>
-                <a href="https://github.com/KroMiose/nekro-plugin-webapp" class="btn btn-secondary" target="_blank" rel="noopener">
-                    🔌 插件仓库
-                </a>
-            </div>
-        </section>
-    </main>
-    
-    <footer class="footer">
-        <div class="footer-links">
-            <a href="https://github.com/KroMiose" target="_blank" rel="noopener">GitHub</a>
-            <a href="https://github.com/KroMiose/nekro-agent" target="_blank" rel="noopener">NekroAgent</a>
         </div>
-        <p>由 <a href="https://github.com/KroMiose">KroMiose</a> 开发 · MIT License</p>
-    </footer>
+
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-value">React 18</div>
+                <div class="stat-label">Runtime</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">esbuild</div>
+                <div class="stat-label">Compiler</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">Edge</div>
+                <div class="stat-label">Deploy</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">~500ms</div>
+                <div class="stat-label">Build Time</div>
+            </div>
+        </div>
+
+        <div class="flow-section">
+            <div class="section-label">Development Pipeline</div>
+            
+            <div class="flow-container">
+                <div class="flow">
+                    <div class="flow-node">
+                        <div class="flow-icon">💬</div>
+                        <div class="flow-title">需求输入</div>
+                        <div class="flow-desc">自然语言描述</div>
+                    </div>
+                    
+                    <div class="flow-arrow">
+                        <div class="flow-pulse"></div>
+                    </div>
+                    
+                    <div class="flow-node">
+                        <div class="flow-icon">🧠</div>
+                        <div class="flow-title">Agent 分析</div>
+                        <div class="flow-desc">Text-to-Tool Bridge</div>
+                    </div>
+                    
+                    <div class="flow-arrow">
+                        <div class="flow-pulse"></div>
+                    </div>
+                    
+                    <div class="flow-node">
+                        <div class="flow-icon">⚡</div>
+                        <div class="flow-title">实时编译</div>
+                        <div class="flow-desc">esbuild + Import Map</div>
+                    </div>
+                    
+                    <div class="flow-arrow">
+                        <div class="flow-pulse"></div>
+                    </div>
+                    
+                    <div class="flow-node">
+                        <div class="flow-icon">🚀</div>
+                        <div class="flow-title">边缘部署</div>
+                        <div class="flow-desc">Cloudflare Workers</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="features">
+            <div class="feature">
+                <div class="feature-header">
+                    <span class="feature-icon">🔄</span>
+                    <h3>异步任务架构</h3>
+                </div>
+                <p>Agent 在后台独立工作，主对话完全不阻塞。任务完成自动通知，支持随时发送反馈补充需求。</p>
+            </div>
+            
+            <div class="feature">
+                <div class="feature-header">
+                    <span class="feature-icon">🌊</span>
+                    <h3>流式工具调用</h3>
+                </div>
+                <p>纯文本协议输出，操作块完成后立即执行。支持错误即时打断，迭代式自动修复。</p>
+            </div>
+            
+            <div class="feature">
+                <div class="feature-header">
+                    <span class="feature-icon">📁</span>
+                    <h3>虚拟文件系统</h3>
+                </div>
+                <p>完整的项目管理能力，支持多文件组织。Agent 可自由创建、编辑、删除项目文件。</p>
+            </div>
+            
+            <div class="feature">
+                <div class="feature-header">
+                    <span class="feature-icon">🔐</span>
+                    <h3>权限分离设计</h3>
+                </div>
+                <p>管理密钥与访问密钥分离，安全可控。支持多用户共享，便于团队协作。</p>
+            </div>
+        </div>
+
+        <div class="tech-section">
+            <div class="section-label">Tech Stack</div>
+            <div class="tech-grid">
+                <span class="tech-badge">TypeScript</span>
+                <span class="tech-badge">React 18</span>
+                <span class="tech-badge">Tailwind CSS</span>
+                <span class="tech-badge">esbuild</span>
+                <span class="tech-badge">ESM Modules</span>
+                <span class="tech-badge">Cloudflare Workers</span>
+            </div>
+        </div>
+
+        <footer>
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <strong>NekroAgent</strong> Plugin System
+                </div>
+                <div class="footer-links">
+                    <a href="https://github.com/KroMiose/nekro-agent" target="_blank">GitHub</a>
+                    <a href="https://doc.nekro.ai" target="_blank">Documentation</a>
+                </div>
+            </div>
+        </footer>
+    </div>
 </body>
 </html>

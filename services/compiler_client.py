@@ -13,10 +13,11 @@ if TYPE_CHECKING:
     from .task_tracer import TaskTracer
 
 
+
 async def compile_project(
     files: Dict[str, str],
+    tracer: "TaskTracer",
     env_vars: Optional[Dict[str, str]] = None,
-    tracer: Optional["TaskTracer"] = None,
     agent_id: str = "UNKNOWN",
 ) -> Tuple[bool, str, List[str]]:
     """
@@ -73,10 +74,7 @@ async def compile_project(
         stderr = stderr_bytes.decode()
 
         if process.returncode != 0:
-            if tracer:
-                tracer.log_event("COMPILER_CRASH", agent_id, f"Local compiler crashed: {stderr}")
-            else:
-                logger.error(f"[WebDev] Local compiler crashed: {stderr}")
+            tracer.log_event(tracer.EVENT.COMPILER_CRASH, agent_id, f"Local compiler crashed: {stderr}")
             return False, f"Compiler crashed: {stderr}", []
 
         # 3. 解析结果
@@ -86,10 +84,7 @@ async def compile_project(
         try:
             result = json.loads(stdout)
         except json.JSONDecodeError:
-            if tracer:
-                 tracer.log_event("COMPILER_JSON_ERR", agent_id, f"Invalid JSON from compiler: {stdout}")
-            else:
-                 logger.error(f"[WebDev] Invalid JSON from compiler: {stdout}")
+            tracer.log_event(tracer.EVENT.COMPILER_JSON_ERR, agent_id, f"Invalid JSON from compiler: {stdout}")
             return False, f"Compiler internal error (Invalid JSON): {stdout[:200]}...", []
 
         externals = result.get("externals", [])
@@ -98,17 +93,14 @@ async def compile_project(
         return False, result.get("error", "Unknown error"), externals
 
     except Exception as e:
-        if tracer:
-            tracer.log_event("COMPILER_EXCEPTION", agent_id, f"Compilation exception: {e}")
-        else:
-            logger.exception(f"[WebDev] Compilation exception: {e}")
+        tracer.log_event(tracer.EVENT.COMPILER_EXCEPTION, agent_id, f"Compilation exception: {e}")
         return False, str(e), []
 
 
 async def check_project(
     files: Dict[str, str],
+    tracer: "TaskTracer",
     env_vars: Optional[Dict[str, str]] = None,
-    tracer: Optional["TaskTracer"] = None,
     agent_id: str = "UNKNOWN",
 ) -> Optional[str]:
     """Run strict type checking on the project."""

@@ -10,8 +10,9 @@ import os
 import shutil
 import time
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from nekro_agent.core.logger import logger
 
@@ -19,12 +20,180 @@ if TYPE_CHECKING:
     from ..services.vfs import ProjectContext
 
 
+class TaskEvent(str, Enum):
+    """任务事件类型枚举
+    
+    定义所有可追踪的事件类型，用于任务日志记录和分析。
+    继承 str 使其在 JSON 序列化和字符串比较时更便捷。
+    """
+    
+    # ==================== 任务生命周期 ====================
+    
+    TASK_START = "TASK_START"
+    """任务开始 - 异步任务被创建时触发"""
+    
+    TASK_END = "TASK_END"
+    """任务结束 - 任务完成（无论成功失败）时触发"""
+    
+    TASK_DONE = "TASK_DONE"
+    """任务完成 - Developer Agent 调用 done 工具，标记任务成功"""
+    
+    TASK_ABORT = "TASK_ABORT"
+    """任务中止 - 任务被主动中止"""
+    
+    # ==================== Agent 循环 ====================
+    
+    AGENT_START = "AGENT_START"
+    """Agent 启动 - Developer Agent 开始执行"""
+    
+    LOOP_START = "LOOP_START"
+    """循环开始 - Agent 主循环开始"""
+    
+    LOOP_SUCCESS = "LOOP_SUCCESS"
+    """循环成功 - Agent 主循环正常完成"""
+    
+    LOOP_TIMEOUT = "LOOP_TIMEOUT"
+    """循环超时 - 达到最大迭代次数"""
+    
+    ITERATION_START = "ITERATION_START"
+    """迭代开始 - 新一轮迭代开始"""
+    
+    ITERATION_ERROR = "ITERATION_ERROR"
+    """迭代错误 - 迭代过程中发生异常"""
+    
+    # ==================== LLM 调用 ====================
+    
+    LLM_CALL_START = "LLM_CALL_START"
+    """LLM 调用开始 - 向 LLM 发送请求"""
+    
+    LLM_ERROR = "LLM_ERROR"
+    """LLM 错误 - LLM 返回错误响应"""
+    
+    LLM_EXCEPTION = "LLM_EXCEPTION"
+    """LLM 异常 - LLM 调用过程中发生异常"""
+    
+    # ==================== 编译（开发中） ====================
+    
+    COMPILE_START = "COMPILE_START"
+    """编译开始 - 开发过程中的增量编译"""
+    
+    COMPILE_SUCCESS = "COMPILE_SUCCESS"
+    """编译成功 - 增量编译通过"""
+    
+    COMPILE_FAILED = "COMPILE_FAILED"
+    """编译失败 - 增量编译出错"""
+    
+    # ==================== 最终编译（部署前） ====================
+    
+    FINAL_COMPILE_START = "FINAL_COMPILE_START"
+    """最终编译开始 - 生成部署产物前的编译"""
+    
+    FINAL_COMPILE_SUCCESS = "FINAL_COMPILE_SUCCESS"
+    """最终编译成功 - 部署产物生成成功"""
+    
+    FINAL_COMPILE_FAILED = "FINAL_COMPILE_FAILED"
+    """最终编译失败 - 部署产物生成失败"""
+    
+    # ==================== 部署 ====================
+    
+    DEPLOY_START = "DEPLOY_START"
+    """部署开始 - 开始上传到 Worker"""
+    
+    DEPLOY_SUCCESS = "DEPLOY_SUCCESS"
+    """部署成功 - 成功获取部署 URL"""
+    
+    DEPLOY_FAILED = "DEPLOY_FAILED"
+    """部署失败 - 部署过程出错"""
+    
+    # ==================== 通知 ====================
+    
+    NOTIFICATION_SENT = "NOTIFICATION_SENT"
+    """通知已发送 - 已通知主 Agent"""
+    
+    # ==================== 工具调用 ====================
+    
+    TOOL_CALL = "TOOL_CALL"
+    """工具调用 - Developer Agent 调用工具"""
+    
+    # ==================== 通用/杂项 ====================
+    
+    INFO = "INFO"
+    """通用信息 - 一般性说明或不重要的事件"""
+    
+    WARNING = "WARNING"
+    """警告 - 需要注意但不影响执行的情况"""
+    
+    ERROR = "ERROR"
+    """错误 - 发生错误"""
+    
+    # ==================== 编译器相关 ====================
+    
+    COMPILER_CRASH = "COMPILER_CRASH"
+    """编译器崩溃 - 本地编译器进程崩溃"""
+    
+    COMPILER_JSON_ERR = "COMPILER_JSON_ERR"
+    """编译器 JSON 错误 - 编译器输出格式错误"""
+    
+    COMPILER_EXCEPTION = "COMPILER_EXCEPTION"
+    """编译器异常 - 编译过程发生异常"""
+    
+    # ==================== Node.js 运行时 ====================
+    
+    NODE_DOWNLOAD = "NODE_DOWNLOAD"
+    """Node.js 下载 - 开始下载 Node.js"""
+    
+    NODE_EXTRACT = "NODE_EXTRACT"
+    """Node.js 解压 - 解压 Node.js 包"""
+    
+    NODE_INSTALLED = "NODE_INSTALLED"
+    """Node.js 安装完成 - Node.js 安装成功"""
+    
+    NODE_MISSING = "NODE_MISSING"
+    """Node.js 缺失 - 系统未找到 Node.js"""
+    
+    NODE_UNKNOWN_SYS = "NODE_UNKNOWN_SYS"
+    """未知系统 - 无法识别的操作系统"""
+    
+    NODE_UNKNOWN_ARCH = "NODE_UNKNOWN_ARCH"
+    """未知架构 - 无法识别的 CPU 架构"""
+
+    # ==================== Scoped Streaming Agent ====================
+    
+    SCOPE_DECLARED = "SCOPE_DECLARED"
+    """Scope 声明 - Agent 调用 declare_scope 声明操作范围"""
+    
+    FILES_REQUESTED = "FILES_REQUESTED"
+    """文件请求 - Agent 调用 request_files 请求读取文件"""
+    
+    FILE_WRITTEN = "FILE_WRITTEN"
+    """文件写入 - 通过 Text 流写入文件"""
+    
+    AUTO_COMMITTED = "AUTO_COMMITTED"
+    """自动提交 - Scope 中所有文件完成后自动提交"""
+    
+    FILE_COMPLETED = "FILE_COMPLETED"
+    """文件完成（显式）- Agent 调用 complete_file 显式标记文件完成"""
+    
+    # ==================== 异步流处理 ====================
+    
+    UNITS_DISCARDED = "UNITS_DISCARDED"
+    """单元丢弃 - 执行失败后丢弃的未执行单元"""
+    
+    PRODUCER_CANCELLED = "PRODUCER_CANCELLED"
+    """生产者取消 - LLM 流被取消"""
+
+
 class TaskTracer:
     """任务追踪器
 
     记录从任务创建到交付的完整时间线，使用 T+HH:MM:SS.mmm 格式。
     自动保存 VFS 快照、提示词日志，并生成分析提示文档。
+    
+    通过 EVENT 类属性访问事件类型枚举：tracer.EVENT.TASK_START
     """
+    
+    # 事件类型枚举，通过 tracer.EVENT.xxx 访问
+    EVENT = TaskEvent
 
     def __init__(
         self,
@@ -32,6 +201,7 @@ class TaskTracer:
         root_agent_id: str,
         task_description: str,
         plugin_data_dir: str,
+        enabled: bool = True,
     ):
         """初始化任务追踪器
 
@@ -40,7 +210,10 @@ class TaskTracer:
             root_agent_id: 根 Agent ID
             task_description: 任务描述
             plugin_data_dir: 插件数据目录路径
+            enabled: 是否启用追踪（默认 True）
         """
+        self.enabled = enabled
+        
         # 任务 ID 格式：YYYYMMDD_HHMMSS_AgentID
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.task_id = f"{timestamp}_{root_agent_id}"
@@ -48,24 +221,24 @@ class TaskTracer:
         self.root_agent_id = root_agent_id
         self.task_description = task_description
         self.start_time = time.time()
-
-        # 创建任务目录
+        
+        # 即使禁用，也初始化基本路径属性以防调用出错，但不创建目录
         self.task_dir = Path(plugin_data_dir) / "tasks" / f"task_{self.task_id}"
-        self.task_dir.mkdir(parents=True, exist_ok=True)
-        (self.task_dir / "prompts").mkdir(exist_ok=True)
-        (self.task_dir / "vfs_snapshot").mkdir(exist_ok=True)
-
-        # 日志文件路径（01_ 前缀确保排序）
         self.log_file = self.task_dir / "01_task_trace.log"
-
-        # 事件列表和计数器
         self.events: List[Dict[str, Any]] = []
         self.prompt_counter = 0
 
-        # 初始化日志文件
-        self._init_log_file()
-
-        logger.info(f"[TaskTracer] 任务追踪器已创建: {self.task_id}")
+        if self.enabled:
+            # 创建任务目录
+            self.task_dir.mkdir(parents=True, exist_ok=True)
+            (self.task_dir / "prompts").mkdir(exist_ok=True)
+            (self.task_dir / "vfs_snapshot").mkdir(exist_ok=True)
+            
+            # 初始化日志文件
+            self._init_log_file()
+            logger.info(f"[TaskTracer] 任务追踪器已创建: {self.task_id}")
+        else:
+            logger.debug(f"[TaskTracer] 任务追踪器已禁用: {self.task_id}")
 
     def _init_log_file(self) -> None:
         """初始化日志文件头部"""
@@ -83,7 +256,7 @@ class TaskTracer:
     
     def log_event(
         self,
-        event_type: str,
+        event_type: Union[TaskEvent, str],
         agent_id: str,
         message: str,
         level: str = "INFO",
@@ -96,12 +269,15 @@ class TaskTracer:
         3. 携带结构化数据传给 TraceLogHandler (生成详细日志文件)
         
         Args:
-            event_type: 事件类型
+            event_type: 事件类型（推荐使用 TaskEvent 枚举，如 tracer.EVENT.TASK_START）
             agent_id: Agent ID
             message: 主要消息
             level: 日志级别 (INFO, WARNING, ERROR)
             **metadata: 额外数据
         """
+        if not self.enabled:
+            return
+
         elapsed = time.time() - self.start_time
         timestamp = self._format_t_plus(elapsed)
         
@@ -149,8 +325,8 @@ class TaskTracer:
 
     def register_prompt_log(
         self,
-        agent_id: str,
-        round_num: int,
+        _agent_id: str,
+        _round_num: int,
         original_log_path: str,
     ) -> str:
         """注册并复制提示词日志
@@ -163,6 +339,9 @@ class TaskTracer:
         Returns:
             新的日志文件路径
         """
+        if not self.enabled:
+            return ""
+
         self.prompt_counter += 1
 
         # 提取原始日志的时间戳
@@ -179,14 +358,11 @@ class TaskTracer:
             date_part = now.strftime("%Y%m%d")
             time_part = now.strftime("%H%M%S")
 
-        # 新文件名：序号_日期_时间_毫秒_AgentID_round_N.log
-        # 格式：001_20260113_114118_500_Web_0001_round_1.log
-        milliseconds = int((time.time() % 1) * 1000)
+        # 新文件名：序号_日期_时间.log
+        # 格式：001_20260113_114118.log
         new_filename = (
             f"{self.prompt_counter:03d}_"
-            f"{date_part}_{time_part}_"
-            f"{milliseconds:03d}_"
-            f"{agent_id}_round_{round_num}.log"
+            f"{date_part}_{time_part}.log"
         )
 
         new_path = self.task_dir / "prompts" / new_filename
@@ -200,12 +376,100 @@ class TaskTracer:
 
         return str(new_path)
 
+    def save_prompt(
+        self,
+        agent_id: str,
+        messages: List[Any],  # OpenAIChatMessage
+        response: Union[str, Dict[str, Any]],
+    ) -> str:
+        """保存 LLM 交互日志
+        
+        Args:
+            agent_id: Agent ID
+            messages: 发送给 LLM 的消息列表
+            response: LLM 的响应内容 (str 或 Message Dict)
+            
+        Returns:
+            保存的日志文件路径
+        """
+        if not self.enabled:
+            return ""
+
+        self.prompt_counter += 1
+        
+        # 文件名格式：序号_日期_时间.log
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        
+        new_filename = (
+            f"{self.prompt_counter:03d}_"
+            f"{timestamp}.log"
+        )
+        
+        log_path = self.task_dir / "prompts" / new_filename
+        
+        try:
+            # 构建日志内容
+            content = f"""{'=' * 80}
+提示词日志 - {agent_id}
+{'=' * 80}
+时间: {now.strftime('%Y-%m-%d %H:%M:%S')}
+Event: LLM Call {self.prompt_counter}
+{'=' * 80}
+
+"""
+            # 记录请求消息
+            for i, msg in enumerate(messages, 1):
+                if isinstance(msg, dict):
+                    role = msg.get("role", "unknown")
+                    text = msg.get("content", "")
+                    if "tool_calls" in msg:
+                        tc = msg["tool_calls"]
+                        tc_json = json.dumps(tc, ensure_ascii=False, indent=2)
+                        text = f"{text}\n\n[Tool Calls]: {tc_json}" if text else f"[Tool Calls]: {tc_json}"
+                    if not text:
+                        text = str(msg)
+                else:
+                    role = getattr(msg, "role", "unknown")
+                    text = getattr(msg, "content", str(msg))
+                content += f"[{i}] Role: {role}\n"
+                content += f"Content:\n{text}\n"
+                content += f"{'-' * 80}\n\n"
+            
+            # 记录响应
+            content += f"[{len(messages) + 1}] Role: assistant (RESPONSE)\n"
+            
+            resp_text = ""
+            if isinstance(response, dict):
+                resp_text = response.get("content", "") or ""
+                if "tool_calls" in response:
+                    tc = response["tool_calls"]
+                    tc_json = json.dumps(tc, ensure_ascii=False, indent=2)
+                    resp_text = f"{resp_text}\n\n[Tool Calls]: {tc_json}" if resp_text else f"[Tool Calls]: {tc_json}"
+            else:
+                resp_text = str(response)
+                
+            content += f"Content:\n{resp_text}\n"
+            content += f"{'=' * 80}\n"
+
+            log_path.write_text(content, encoding="utf-8")
+            logger.debug(f"[TaskTracer] 已保存提示词日志: {new_filename}")
+            
+            return str(log_path)
+            
+        except Exception as e:
+            logger.error(f"[TaskTracer] 保存提示词日志失败: {e}")
+            return ""
+
     def save_vfs_snapshot(self, vfs_context: "ProjectContext") -> None:
         """保存 VFS 虚拟文件系统快照
 
         Args:
             vfs_context: VFS 项目上下文
         """
+        if not self.enabled:
+            return
+
         try:
             all_files = vfs_context.list_files()
 
@@ -233,6 +497,9 @@ class TaskTracer:
             final_status: 最终状态（SUCCESS, FAILED, FORCE_DELIVERED 等）
             error_summary: 错误摘要
         """
+        if not self.enabled:
+            return
+
         # 防止重复 finalize
         if hasattr(self, "_finalized") and self._finalized:
             logger.warning(
@@ -244,7 +511,7 @@ class TaskTracer:
 
         # 记录任务结束事件
         self.log_event(
-            "TASK_END",
+            TaskEvent.TASK_END,
             self.root_agent_id,
             f"任务结束: {final_status}",
             final_status=final_status,
@@ -305,8 +572,8 @@ class TaskTracer:
         agents = list({e["agent_id"] for e in self.events})
 
         # 统计各类事件
-        llm_calls = sum(1 for e in self.events if e["event_type"] == "LLM_CALL_START")
-        reviews = sum(1 for e in self.events if e["event_type"] == "REVIEW_START")
+        llm_calls = sum(1 for e in self.events if e["event_type"] == TaskEvent.LLM_CALL_START)
+        reviews = sum(1 for e in self.events if e["event_type"] == "REVIEW_START")  # REVIEW_START 暂未使用
 
         footer = f"""
 {"=" * 80}
@@ -331,6 +598,71 @@ VFS 快照: vfs_snapshot/ 目录
         with self.log_file.open("a", encoding="utf-8") as f:
             f.write(footer)
 
+    def _generate_diagnostic_section(self) -> str:
+        """生成诊断检查部分
+        
+        检测关键事件是否缺失，返回 markdown 格式的诊断报告。
+        
+        Returns:
+            诊断报告字符串（可能为空）
+        """
+        event_types_set = {e["event_type"] for e in self.events}
+        
+        # 根据不同的任务终态，检查应该存在的事件
+        # 基础事件（所有任务都应该有）
+        base_events = ["TASK_START", "TASK_END"]
+        
+        # 如果任务成功或编译失败，应该有编译相关事件
+        compile_events = ["FINAL_COMPILE_START"]
+        if "FINAL_COMPILE_SUCCESS" in event_types_set:
+            compile_events.append("FINAL_COMPILE_SUCCESS")
+        
+        # 如果任务成功，应该有部署事件
+        deploy_events = []
+        if "DEPLOY_SUCCESS" in event_types_set or "DEPLOY_FAILED" in event_types_set:
+            deploy_events = ["DEPLOY_START"]
+        
+        # 检查通知事件
+        should_have_notification = (
+            "TASK_END" in event_types_set  # 只要任务结束了，就应该有通知
+        )
+        
+        missing_events = []
+        warnings = []
+        
+        # 检查基础事件
+        for evt in base_events:
+            if evt not in event_types_set:
+                missing_events.append(evt)
+        
+        # 检查编译事件（只在有编译相关事件时检查）
+        if any(e.startswith("FINAL_COMPILE") for e in event_types_set):
+            for evt in compile_events:
+                if evt not in event_types_set:
+                    missing_events.append(evt)
+        
+        # 检查部署事件
+        for evt in deploy_events:
+            if evt not in event_types_set:
+                missing_events.append(evt)
+        
+        # 检查通知事件
+        if should_have_notification and "NOTIFICATION_SENT" not in event_types_set:
+            warnings.append("没有记录到 NOTIFICATION_SENT 事件，主 Agent 可能未收到通知")
+        
+        # 生成诊断报告
+        if not missing_events and not warnings:
+            return ""
+        
+        sections = []
+        if missing_events:
+            sections.append(f"> [!WARNING]\n> 缺失关键事件: {', '.join(missing_events)}")
+        
+        for warning in warnings:
+            sections.append(f"> [!CAUTION]\n> {warning}")
+        
+        return "## 🔔 自动诊断\n\n" + "\n\n".join(sections) + "\n"
+
     def _generate_analysis_prompt(self, final_status: str, error_summary: str) -> None:
         """生成自包含的分析提示文档
 
@@ -349,6 +681,13 @@ VFS 快照: vfs_snapshot/ 目录
                 "AGENT_CREATED",
                 "REVIEW_START",
                 "REVIEW_RESULT",
+                "FINAL_COMPILE_START",
+                "FINAL_COMPILE_SUCCESS",
+                "FINAL_COMPILE_FAILED",
+                "DEPLOY_START",
+                "DEPLOY_SUCCESS",
+                "DEPLOY_FAILED",
+                "NOTIFICATION_SENT",
                 "TASK_END",
             ]:
                 key_events.append(
@@ -356,7 +695,7 @@ VFS 快照: vfs_snapshot/ 目录
                     f"{event['agent_id']}: {event['message']}",
                 )
 
-        key_timeline = "\n".join(key_events[:20])  # 最多显示 20 个关键事件
+        key_timeline = "\n".join(key_events[:30])  # 最多显示 30 个关键事件
 
         # 列出所有提示词日志
         prompt_logs = sorted((self.task_dir / "prompts").glob("*.log"))
@@ -399,6 +738,8 @@ tasks/task_{self.task_id}/
 ```
 {key_timeline}
 ```
+
+{self._generate_diagnostic_section()}
 
 ## 📝 分析指引
 
