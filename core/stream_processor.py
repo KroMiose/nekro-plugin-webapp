@@ -16,18 +16,21 @@ import asyncio
 from asyncio import CancelledError, Queue
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from nekro_agent.core.logger import logger
 
-from .command_parser import CommandStreamParser, CommandType
+from .command_parser import CommandStreamParser, CommandType, ParsedCommand
 from .streaming_client import stream_text_completion
+
+if TYPE_CHECKING:
+    from .context import ToolContext
 
 
 class ControlUnitType(Enum):
     """控制流单元类型"""
 
-    FILE = "file"  # 文件内容块
+    FILE = "file"  # 文件内容块（直接写入 VFS）
     TOOL_CALL = "tool_call"  # 工具调用
     END = "end"  # 流结束标记
 
@@ -54,6 +57,7 @@ class ControlUnit:
     executed: bool = False
     success: bool = False
     result: Optional[str] = None
+    should_feedback: bool = False  # 是否需要将结果反馈给 LLM（查询型工具为 True）
 
     def __repr__(self) -> str:
         if self.type == ControlUnitType.FILE:
@@ -61,6 +65,61 @@ class ControlUnit:
         if self.type == ControlUnitType.TOOL_CALL:
             return f"TOOL({self.tool_name})"
         return "END"
+
+
+def process_block_command(cmd: ParsedCommand) -> ControlUnit:
+    """处理块命令，根据块类型转换为 ControlUnit
+    
+    Args:
+        cmd: 解析出的块命令
+        
+    Returns:
+        ControlUnit: FILE 类型直接写入，DIFF 类型调用 apply_diff
+    """
+    from ..tools.block_tools import get_block_tool
+    
+    block_name = cmd.block_name or ""
+    block_tool = get_block_tool(block_name)
+    
+    if block_tool is None:
+        # 未知块类型，当作文件处理
+        logger.warning(f"未知块类型 {block_name}，当作 FILE 处理")
+        return ControlUnit(
+            type=ControlUnitType.FILE,
+            file_path=cmd.block_arg,
+            file_content=cmd.block_content,
+        )
+    
+    if block_tool.is_direct_write:
+        # 直接写入类型（如 FILE）
+        return ControlUnit(
+            type=ControlUnitType.FILE,
+            file_path=cmd.block_arg,
+            file_content=cmd.block_content,
+        )
+    
+    # 需要调用工具的类型（如 DIFF -> apply_diff）
+    # 根据块名映射到对应的行工具
+    tool_mapping = {
+        "DIFF": ("apply_diff", {"path": cmd.block_arg, "diff": cmd.block_content}),
+    }
+    
+    if block_name.upper() in tool_mapping:
+        tool_name, tool_args = tool_mapping[block_name.upper()]
+        return ControlUnit(
+            type=ControlUnitType.TOOL_CALL,
+            tool_name=tool_name,
+            tool_args=tool_args,
+        )
+    
+    # 未配置映射，尝试直接调用 block handler
+    # 这种情况理论上不应该发生，因为所有非直接写入的块都应该配置映射
+    logger.warning(f"块类型 {block_name} 未配置工具映射，当作 FILE 处理")
+    return ControlUnit(
+        type=ControlUnitType.FILE,
+        file_path=cmd.block_arg,
+        file_content=cmd.block_content,
+    )
 
 
 @dataclass
@@ -234,19 +293,18 @@ class StreamProcessor:
 
                 # 解析命令
                 for cmd in parser.feed(text_chunk):
-                    if cmd.type == CommandType.FILE:
-                        unit = ControlUnit(
-                            type=ControlUnitType.FILE,
-                            file_path=cmd.file_path,
-                            file_content=cmd.file_content,
-                        )
+                    if cmd.type == CommandType.BLOCK:
+                        # 块工具（FILE, DIFF 等）
+                        unit = process_block_command(cmd)
                         self._log(
                             "info",
-                            f"FILE 块完成: {cmd.file_path} ({len(cmd.file_content or '')} 字符)",
-                            file_path=cmd.file_path,
-                            content_size=len(cmd.file_content or ""),
+                            f"{cmd.block_name} 块完成: {cmd.block_arg} ({len(cmd.block_content or '')} 字符)",
+                            block_name=cmd.block_name,
+                            block_arg=cmd.block_arg,
+                            content_size=len(cmd.block_content or ""),
                         )
                     elif cmd.type == CommandType.TOOL_CALL:
+                        # 行工具
                         unit = ControlUnit(
                             type=ControlUnitType.TOOL_CALL,
                             tool_name=cmd.tool_name,
@@ -262,19 +320,17 @@ class StreamProcessor:
 
                     await self._queue.put(unit)
 
-            # 流结束，刷新剩余的命令（此变更处理了 flush 返回列表的情况）
+            # 流结束，刷新剩余的命令
             remaining_commands = parser.flush()
             for cmd in remaining_commands:
-                if cmd.type == CommandType.FILE:
-                    unit = ControlUnit(
-                        type=ControlUnitType.FILE,
-                        file_path=cmd.file_path,
-                        file_content=cmd.file_content,
-                    )
+                if cmd.type == CommandType.BLOCK:
+                    # 块工具
+                    unit = process_block_command(cmd)
                     self._log(
                         "warning",
-                        f"FILE 块未完整但已保存: {cmd.file_path}",
-                        file_path=cmd.file_path,
+                        f"{cmd.block_name} 块未完整但已处理: {cmd.block_arg}",
+                        block_name=cmd.block_name,
+                        block_arg=cmd.block_arg,
                     )
                 elif cmd.type == CommandType.TOOL_CALL:
                     unit = ControlUnit(
@@ -289,7 +345,7 @@ class StreamProcessor:
                     )
                 else:
                     continue
-                
+
                 await self._queue.put(unit)
 
             self._log("debug", f"Producer 完成，共处理 {chunk_count} 个 chunk")
@@ -365,6 +421,7 @@ class StreamProcessor:
                     unit.executed = True
                     unit.success = result.success
                     unit.result = result.message
+                    unit.should_feedback = result.should_feedback  # 传递查询型工具标记
                     self._executed_units.append(unit)
 
                     self._log(

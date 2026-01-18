@@ -39,8 +39,40 @@ class WebAppTask:
         self.updated_at = time.time()
 
     def get_full_requirement(self) -> str:
-        """获取完整需求（所有追加）"""
-        return "\n\n---\n\n".join(self.requirements)
+        """获取完整需求（结构化区分历史和当前）
+        
+        格式：
+        - 如果只有一条需求，直接返回
+        - 如果有多条需求，前面的作为"历史需求记录"（仅供参考），最后一条作为"本轮需求"
+        """
+        if len(self.requirements) == 1:
+            return self.requirements[0]
+        
+        # 多条需求：区分历史和当前
+        history = self.requirements[:-1]
+        current = self.requirements[-1]
+        
+        # 构建历史需求摘要（折叠，仅供路径参考）
+        history_lines = []
+        for i, req in enumerate(history, 1):
+            # 截取摘要（前 200 字符）
+            summary = req.strip()[:200]
+            if len(req.strip()) > 200:
+                summary += "..."
+            history_lines.append(f"  [{i}] {summary}")
+        
+        history_section = "\n".join(history_lines)
+        
+        return (
+            f"## 📜 历史需求记录（共 {len(history)} 条，仅供路径参考，不是当前任务）\n\n"
+            f"<details>\n"
+            f"<summary>点击展开历史需求</summary>\n\n"
+            f"{history_section}\n\n"
+            f"</details>\n\n"
+            f"---\n\n"
+            f"## 🎯 本轮需求（请专注完成以下内容）\n\n"
+            f"{current}"
+        )
 
 
 class TaskManager:

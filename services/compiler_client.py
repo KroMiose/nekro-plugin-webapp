@@ -42,6 +42,13 @@ async def compile_project(
         if not script_path.exists():
             return False, f"Compiler script not found at {script_path}", []
 
+        # 1.5. 执行类型检查 (TypeScript Strict Check)
+        type_check_error = await check_project(files, tracer, env_vars, agent_id)
+        if type_check_error:
+            # 如果类型检查失败，直接返回错误，不需要继续构建 bundle
+            # 这能捕获如 undefined variables, missing imports 等关键错误
+            return False, f"Type Check Failed:\n{type_check_error}", []
+
         # 2. 调用 Node 进程
         input_payload = {
             "files": files,

@@ -105,7 +105,7 @@ async def _webapp_dev_task(
             file_count=len(files),
         )
 
-        compile_success, js_output, _ = await compile_project(
+        compile_success, js_output, externals = await compile_project(
             files=files,
             env_vars=None,
             tracer=tracer,
@@ -134,12 +134,74 @@ async def _webapp_dev_task(
             agent_id=task_id,
             message="最终编译成功",
             output_size=len(js_output),
+            externals=externals,
         )
 
-        yield TaskCtl.report_progress("🚀 部署中...", 90)
+        # ==================== 外部依赖验证与动态解析 ====================
+        from .services.html_generator import generate_shell_html, validate_externals
 
-        # 包装 JS 为完整 HTML (含动态依赖注入)
-        from .services.html_generator import generate_shell_html
+        extra_imports: dict[str, str] = {}
+
+        if externals:
+            tracer.log_event(
+                event_type=tracer.EVENT.DEPENDENCY_CHECK,
+                agent_id=task_id,
+                message=f"检查外部依赖: {', '.join(externals)}",
+                externals=externals,
+            )
+
+            is_valid, missing = validate_externals(externals)
+
+            if not is_valid:
+                # 尝试动态解析缺失的依赖
+                tracer.log_event(
+                    event_type=tracer.EVENT.DEPENDENCY_RESOLVE_START,
+                    agent_id=task_id,
+                    message=f"尝试动态解析未知依赖: {', '.join(missing)}",
+                    missing_packages=missing,
+                )
+
+                from .services.dependency_resolver import resolve_missing_dependencies
+
+                resolved, unresolved = await resolve_missing_dependencies(
+                    missing,
+                    model_group=config.MODEL_GROUP,
+                )
+
+                if resolved:
+                    extra_imports.update(resolved)
+                    tracer.log_event(
+                        event_type=tracer.EVENT.DEPENDENCY_RESOLVE_SUCCESS,
+                        agent_id=task_id,
+                        message=f"成功解析 {len(resolved)} 个依赖",
+                        resolved=list(resolved.keys()),
+                    )
+
+                if unresolved:
+                    # 仍有无法解析的依赖，拒绝部署
+                    error_msg = (
+                        f"以下外部依赖未在系统中配置且无法自动解析: {', '.join(unresolved)}\n"
+                        "请使用系统支持的库，或联系管理员添加。\n"
+                        "支持的库请参考开发文档。"
+                    )
+                    tracer.log_event(
+                        event_type=tracer.EVENT.DEPENDENCY_RESOLVE_FAILED,
+                        agent_id=task_id,
+                        message=f"依赖解析失败: {', '.join(unresolved)}",
+                        unresolved=unresolved,
+                        level="ERROR",
+                    )
+                    await handle.notify_agent(f"❌ WebApp 依赖解析失败 (ID: {task_id})\n{error_msg}")
+                    tracer.log_event(
+                        event_type=tracer.EVENT.NOTIFICATION_SENT,
+                        agent_id=task_id,
+                        message="已通知主 Agent: 依赖解析失败",
+                    )
+                    tracer.finalize("DEPENDENCY_ERROR", error_msg)
+                    yield TaskCtl.fail(f"依赖解析失败: {error_msg}")
+                    return
+
+        yield TaskCtl.report_progress("🚀 部署中...", 90)
 
         # 尝试获取 Agent 设定的标题
         state = runtime_state.get_state(chat_key, task_id)
@@ -149,6 +211,7 @@ async def _webapp_dev_task(
             title=page_title,
             body_js=js_output,
             dependencies=[],
+            extra_imports=extra_imports,
         )
 
         tracer.log_event(

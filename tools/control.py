@@ -1,9 +1,11 @@
 """控制工具
 
 提供任务完成标记等控制功能。
+所有工具统一返回 ToolResult 类型，tool_name 由框架自动注入。
 """
 
 from ..core.context import AgentExecutionState, ToolContext
+from ..core.error_feedback import ToolResult
 from ..services.compiler_client import compile_project
 from . import agent_tool
 from .compile import enhance_compile_error
@@ -27,13 +29,13 @@ from .compile import enhance_compile_error
         "required": ["summary"],
     },
 )
-async def done(ctx: ToolContext, summary: str, title: str = "") -> str:
-    """标记完成（自动编译）"""
+async def done(ctx: ToolContext, summary: str, title: str = "") -> ToolResult:
+    """标记完成（动作型工具，静默成功）"""
     files = ctx.project.get_snapshot()
 
     # 1. 基础检查
     if not files:
-        return "❌ 项目为空，无法提交"
+        return ToolResult.ok("❌ 项目为空，无法提交")
 
     # 2. 执行编译
     if ctx.tracer:
@@ -61,23 +63,23 @@ async def done(ctx: ToolContext, summary: str, title: str = "") -> str:
                 message="提交拒绝：编译失败",
                 error=output[:500],
             )
-        
+
         enhanced_error = enhance_compile_error(output, ctx)
         ctx.state.last_error = enhanced_error
         # 注意：这里不设置 completed=True
-        return f"❌ 提交被拒绝（编译失败）:\n{enhanced_error}"
+        return ToolResult.ok(f"❌ 提交被拒绝（编译失败）:\n{enhanced_error}")
 
     # 4. 提交成功
-    # 4. 提交成功
     ctx.state.completed = True
-    
+
     # 更新运行时标题
     if title:
         from ..services.runtime_state import runtime_state
+
         state = runtime_state.get_state(ctx.chat_key, ctx.task_id)
         if state:
             state.title = title
-    
+
     if ctx.tracer:
         ctx.tracer.log_event(
             event_type=ctx.tracer.EVENT.TASK_DONE,
@@ -86,8 +88,11 @@ async def done(ctx: ToolContext, summary: str, title: str = "") -> str:
             summary=summary,
             output_size=len(output),
         )
-    
-    return f"✅ 任务成功提交!\nWebTitle: {title or 'Default'}\n编译输出: {output[:200]}...\n总结: {summary}"
+
+    return ToolResult.ok(
+        f"✅ 任务成功提交!\nWebTitle: {title or 'Default'}\n"
+        f"编译输出: {output[:200]}...\n总结: {summary}",
+    )
 
 
 @agent_tool(
@@ -104,12 +109,12 @@ async def done(ctx: ToolContext, summary: str, title: str = "") -> str:
         "required": ["reason"],
     },
 )
-async def abort(ctx: ToolContext, reason: str) -> str:
-    """放弃任务"""
+async def abort(ctx: ToolContext, reason: str) -> ToolResult:
+    """放弃任务（动作型工具，静默成功）"""
     ctx.state.completed = True
     ctx.state.last_error = reason
     ctx.state.execution_state = AgentExecutionState.FAILED
-    
+
     if ctx.tracer:
         ctx.tracer.log_event(
             event_type=ctx.tracer.EVENT.TASK_ABORT,
@@ -118,5 +123,5 @@ async def abort(ctx: ToolContext, reason: str) -> str:
             reason=reason,
             level="WARNING",
         )
-    
-    return f"⚠️ 任务放弃: {reason}"
+
+    return ToolResult.ok(f"⚠️ 任务放弃: {reason}")

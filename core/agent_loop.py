@@ -373,10 +373,21 @@ def _build_assistant_message(result: IterationResult) -> Dict[str, Any]:
 def _build_feedback_message(result: IterationResult) -> str:
     """构建反馈消息
 
-    纯文本模式下，只反馈错误和重要状态。
-    成功的文件写入静默处理。
+    纯文本模式下：
+    - 失败的操作：反馈错误信息
+    - 成功且 should_feedback=True 的操作：反馈结果（如 read_files 的文件内容）
+    - 成功且 should_feedback=False 的操作：静默处理（如 write_file）
     """
     parts = []
+
+    # 收集需要反馈的成功结果（查询型工具）
+    feedback_results = []
+    for unit in result.executed_units:
+        if unit.success and unit.should_feedback and unit.result:
+            feedback_results.append(unit.result)
+
+    if feedback_results:
+        parts.extend(feedback_results)
 
     # 收集失败的操作
     failures = []

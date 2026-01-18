@@ -73,13 +73,32 @@ class ToolResult:
     tool_name: str = ""
     """工具名称"""
     
+    should_feedback: bool = False
+    """是否需要将 message 反馈给 LLM
+    
+    - 动作型工具（write_file, done）：False，静默成功
+    - 查询型工具（read_files, list_files）：True，必须反馈结果
+    """
+    
     @classmethod
-    def ok(cls, message: str, tool_name: str = "") -> "ToolResult":
-        """创建成功结果"""
+    def ok(
+        cls,
+        message: str,
+        should_feedback: bool = False,
+    ) -> "ToolResult":
+        """创建成功结果
+        
+        Args:
+            message: 结果消息
+            should_feedback: 是否需要将结果反馈给 LLM（查询型工具设为 True）
+        
+        Note:
+            tool_name 由框架在 execute_tool_safe 中自动设置，工具函数无需传递。
+        """
         return cls(
             success=True,
             message=message,
-            tool_name=tool_name,
+            should_feedback=should_feedback,
         )
     
     @classmethod
@@ -87,18 +106,20 @@ class ToolResult:
         cls,
         message: str,
         error_type: ErrorType,
-        tool_name: str = "",
         recoverable: bool = True,
         context: Optional[Dict[str, Any]] = None,
     ) -> "ToolResult":
-        """创建错误结果"""
+        """创建错误结果
+        
+        Note:
+            tool_name 由框架在 execute_tool_safe 中自动设置，工具函数无需传递。
+        """
         return cls(
             success=False,
             message=message,
             error_type=error_type,
             recoverable=recoverable,
             context=context or {},
-            tool_name=tool_name,
         )
     
     def to_feedback(self) -> str:
@@ -191,17 +212,15 @@ def format_results_for_llm(results: List[ToolResult]) -> str:
 def create_compile_error_feedback(
     error_msg: str,
     available_files: List[str],
-    tool_name: str = "compile",
 ) -> ToolResult:
     """创建编译错误的结构化反馈
     
     Args:
         error_msg: 编译器错误消息
         available_files: 当前可用的文件列表
-        tool_name: 工具名称
         
     Returns:
-        带上下文的 ToolResult
+        带上下文的 ToolResult（tool_name 由框架自动设置）
     """
     # 尝试提取文件相关信息
     context: Dict[str, Any] = {
@@ -219,7 +238,6 @@ def create_compile_error_feedback(
     return ToolResult.error(
         message=error_msg,
         error_type=ErrorType.COMPILE_ERROR,
-        tool_name=tool_name,
         recoverable=True,
         context=context,
     )
@@ -229,7 +247,6 @@ def create_diff_error_feedback(
     search_pattern: str,
     file_path: str,
     current_content_preview: str,
-    tool_name: str = "apply_diff",
 ) -> ToolResult:
     """创建 diff 应用失败的结构化反馈
     
@@ -237,10 +254,9 @@ def create_diff_error_feedback(
         search_pattern: 未找到的搜索模式
         file_path: 目标文件路径
         current_content_preview: 当前文件内容预览（前 500 字符）
-        tool_name: 工具名称
         
     Returns:
-        带上下文的 ToolResult
+        带上下文的 ToolResult（tool_name 由框架自动设置）
     """
     # 截断搜索模式预览
     pattern_preview = search_pattern[:100] + "..." if len(search_pattern) > 100 else search_pattern
@@ -248,7 +264,6 @@ def create_diff_error_feedback(
     return ToolResult.error(
         message=f"Search pattern not found in {file_path}",
         error_type=ErrorType.DIFF_NOT_FOUND,
-        tool_name=tool_name,
         recoverable=True,
         context={
             "file": file_path,
@@ -256,3 +271,4 @@ def create_diff_error_feedback(
             "current_content_preview": current_content_preview[:500] + "..." if len(current_content_preview) > 500 else current_content_preview,
         },
     )
+

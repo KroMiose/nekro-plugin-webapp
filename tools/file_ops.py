@@ -1,12 +1,14 @@
 """文件操作工具
 
 提供 write_file, read_file, apply_diff, list_files 等文件操作工具。
+所有工具统一返回 ToolResult 类型，tool_name 由框架自动注入。
 """
 
 import re
-from typing import Any, Dict, List, Union
+from typing import List, Union
 
 from ..core.context import ToolContext
+from ..core.error_feedback import ErrorType, ToolResult
 from . import agent_tool
 
 
@@ -28,17 +30,17 @@ from . import agent_tool
         "required": ["path", "content"],
     },
 )
-async def write_file(ctx: ToolContext, path: str, content: str) -> str:
-    """写入文件"""
+async def write_file(ctx: ToolContext, path: str, content: str) -> ToolResult:
+    """写入文件（动作型工具，静默成功）"""
     ctx.project.write_file(path, content)
     size = len(content)
     lines = content.count("\n") + 1
-    return f"✅ 已写入 {path} ({lines} 行, {size} 字符)"
+    return ToolResult.ok(f"✅ 已写入 {path} ({lines} 行, {size} 字符)")
 
 
 @agent_tool(
     name="read_file",
-    description="读取文件内容。用于查看现有文件或检查导出。",
+    description="读取单个文件内容。用于查看现有文件或检查导出。",
     parameters={
         "type": "object",
         "properties": {
@@ -50,11 +52,11 @@ async def write_file(ctx: ToolContext, path: str, content: str) -> str:
         "required": ["path"],
     },
 )
-async def read_file(ctx: ToolContext, path: str) -> str:
-    """读取文件"""
+async def read_file(ctx: ToolContext, path: str) -> ToolResult:
+    """读取单个文件（查询型工具，反馈结果）"""
     content = ctx.project.read_file(path)
     if content is None:
-        return f"❌ 文件不存在: {path}"
+        return ToolResult.ok(f"❌ 文件不存在: {path}", should_feedback=True)
 
     lines = content.count("\n") + 1
     # 如果文件过长，截断显示
@@ -65,9 +67,12 @@ async def read_file(ctx: ToolContext, path: str) -> str:
             + f"\n\n... 中间省略 {lines - 100} 行 ...\n\n"
             + "\n".join(content_lines[-50:])
         )
-        return f"📄 {path} ({lines} 行，已截断)\n\n{truncated}"
+        return ToolResult.ok(
+            f"📄 {path} ({lines} 行，已截断)\n\n{truncated}",
+            should_feedback=True,
+        )
 
-    return f"📄 {path} ({lines} 行)\n\n{content}"
+    return ToolResult.ok(f"📄 {path} ({lines} 行)\n\n{content}", should_feedback=True)
 
 
 @agent_tool(
@@ -88,8 +93,8 @@ async def read_file(ctx: ToolContext, path: str) -> str:
         "required": ["path", "diff"],
     },
 )
-async def apply_diff(ctx: ToolContext, path: str, diff: str) -> str:
-    """应用增量修改
+async def apply_diff(ctx: ToolContext, path: str, diff: str) -> ToolResult:
+    """应用增量修改（动作型工具，静默成功）
 
     格式:
         <<<<<<< SEARCH
@@ -100,34 +105,59 @@ async def apply_diff(ctx: ToolContext, path: str, diff: str) -> str:
     """
     content = ctx.project.read_file(path)
     if content is None:
-        return f"❌ 文件不存在: {path}"
+        return ToolResult.error(
+            message=f"文件不存在: {path}",
+            error_type=ErrorType.FILE_NOT_FOUND,
+            recoverable=True,
+        )
 
     # 解析 SEARCH/REPLACE 块
     pattern = r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE"
     matches = re.findall(pattern, diff, re.DOTALL)
 
     if not matches:
-        return (
-            "❌ 无效的 diff 格式，需要 <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE"
+        return ToolResult.error(
+            message="无效的 diff 格式，需要 <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE",
+            error_type=ErrorType.DIFF_NOT_FOUND,
+            recoverable=True,
         )
 
     applied = 0
-    errors = []
+    errors: List[str] = []
 
     for search, replace in matches:
-        if search not in content:
-            preview = search[:50] + "..." if len(search) > 50 else search
-            errors.append(f"未找到: {preview}")
+        # 检查匹配数量
+        match_count = content.count(search)
+
+        if match_count == 0:
+            # 未找到匹配
+            preview = search[:100] + "..." if len(search) > 100 else search
+            errors.append(
+                f"❌ 未找到匹配内容，请检查 SEARCH 部分是否与文件内容完全一致（包括空格和缩进）:\n"
+                f"```\n{preview}\n```",
+            )
             continue
 
+        if match_count > 1:
+            # 多处匹配，拒绝执行
+            preview = search[:80] + "..." if len(search) > 80 else search
+            errors.append(
+                f"❌ 发现 {match_count} 处相同内容，无法确定替换哪一个。请扩展 SEARCH 块的上下文使其唯一:\n"
+                f"```\n{preview}\n```",
+            )
+            continue
+
+        # 唯一匹配，执行替换
         content = content.replace(search, replace, 1)
         applied += 1
 
     if errors:
-        return "❌ 部分修改失败:\n" + "\n".join(errors)
+        # 有错误时，返回详细反馈让 Agent 修正
+        error_msg = f"DIFF 应用失败 ({len(errors)} 处错误, {applied} 处成功):\n\n" + "\n\n".join(errors)
+        return ToolResult.ok(error_msg, should_feedback=True)
 
     ctx.project.write_file(path, content)
-    return f"✅ 已应用 {applied} 处修改到 {path}"
+    return ToolResult.ok(f"✅ 已应用 {applied} 处修改到 {path}")
 
 
 @agent_tool(
@@ -144,13 +174,13 @@ async def apply_diff(ctx: ToolContext, path: str, diff: str) -> str:
         "required": ["path"],
     },
 )
-async def delete_file(ctx: ToolContext, path: str) -> str:
-    """删除文件"""
+async def delete_file(ctx: ToolContext, path: str) -> ToolResult:
+    """删除文件（动作型工具，静默成功）"""
     if ctx.project.read_file(path) is None:
-        return f"❌ 文件不存在: {path}"
+        return ToolResult.ok(f"❌ 文件不存在: {path}")
 
     ctx.project.delete_file(path)
-    return f"✅ 已删除 {path}"
+    return ToolResult.ok(f"✅ 已删除 {path}")
 
 
 @agent_tool(
@@ -161,12 +191,12 @@ async def delete_file(ctx: ToolContext, path: str) -> str:
         "properties": {},
     },
 )
-async def list_files(ctx: ToolContext) -> str:
-    """列出所有文件"""
+async def list_files(ctx: ToolContext) -> ToolResult:
+    """列出所有文件（查询型工具，反馈结果）"""
     files = ctx.project.list_files()
 
     if not files:
-        return "📁 项目为空，尚无文件"
+        return ToolResult.ok("📁 项目为空，尚无文件", should_feedback=True)
 
     lines = ["📁 项目文件:"]
     for f in sorted(files):
@@ -184,7 +214,7 @@ async def list_files(ctx: ToolContext) -> str:
 
         lines.append(f"  • {f} ({size} chars){exports_hint}")
 
-    return "\n".join(lines)
+    return ToolResult.ok("\n".join(lines), should_feedback=True)
 
 
 @agent_tool(
@@ -201,15 +231,12 @@ async def list_files(ctx: ToolContext) -> str:
         "required": ["paths"],
     },
 )
-async def read_files(ctx: ToolContext, paths: Union[str, List[str]]) -> str:
-    """读取多个文件内容
+async def read_files(ctx: ToolContext, paths: Union[str, List[str]]) -> ToolResult:
+    """读取多个文件内容（查询型工具，反馈结果）
 
     Args:
         ctx: 工具上下文
         paths: 文件路径（逗号分隔字符串或列表）
-
-    Returns:
-        文件内容，每个文件用分隔线区分
     """
     # 处理参数格式
     if isinstance(paths, str):
@@ -218,11 +245,14 @@ async def read_files(ctx: ToolContext, paths: Union[str, List[str]]) -> str:
         path_list = paths
 
     if not path_list:
-        return "❌ 未指定文件路径"
+        return ToolResult.ok("❌ 未指定文件路径", should_feedback=True)
 
-    # 限制最多读取 5 个文件
-    if len(path_list) > 5:
-        path_list = path_list[:5]
+    # 限制单次最多读取 6 个文件
+    MAX_FILES = 6
+    remaining_paths: List[str] = []
+    if len(path_list) > MAX_FILES:
+        remaining_paths = path_list[MAX_FILES:]
+        path_list = path_list[:MAX_FILES]
 
     results = []
     found_count = 0
@@ -236,4 +266,16 @@ async def read_files(ctx: ToolContext, paths: Union[str, List[str]]) -> str:
             results.append(f"=== {path} ===\n[文件不存在]")
 
     header = f"读取 {found_count}/{len(path_list)} 个文件:\n"
-    return header + "\n\n".join(results)
+    body = "\n\n".join(results)
+
+    # 如果有超出限制的文件，提示 Agent 再次调用
+    if remaining_paths:
+        remaining_str = ", ".join(remaining_paths)
+        footer = (
+            f"\n\n⚠️ 还有 {len(remaining_paths)} 个文件未读取: {remaining_str}\n"
+            f'如需继续读取，请再次调用 @@READ paths="{remaining_str}"'
+        )
+        return ToolResult.ok(header + body + footer, should_feedback=True)
+
+    return ToolResult.ok(header + body, should_feedback=True)
+

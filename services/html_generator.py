@@ -39,13 +39,46 @@ OPTIONAL_IMPORTS = {
     "zustand/vanilla": "https://esm.sh/zustand@4.4.7/vanilla",
     "react-router-dom": "https://esm.sh/react-router-dom@6.21.0?external=react,react-dom",
     "marked": "https://esm.sh/marked@11.1.0",
+    # 2D 游戏引擎
+    "pixi.js": "https://esm.sh/pixi.js@7.3.2",
+    # 动画库
+    "gsap": "https://esm.sh/gsap@3.12.4",
+    "lottie-react": "https://esm.sh/lottie-react@2.4.0?external=react,react-dom",
+    # 音频库
+    "tone": "https://esm.sh/tone@14.7.77",
+    "howler": "https://esm.sh/howler@2.2.4",
+    # 内容渲染
+    "react-markdown": "https://esm.sh/react-markdown@9.0.1?external=react,react-dom",
+    # 工具库
+    "lodash": "https://esm.sh/lodash-es@4.17.21",
+    "mathjs": "https://esm.sh/mathjs@12.2.1",
 }
+
+
+def get_all_known_imports() -> Dict[str, str]:
+    """获取所有已知的依赖映射（核心 + 可选）"""
+    return {**CORE_IMPORTS, **OPTIONAL_IMPORTS}
+
+
+def validate_externals(externals: List[str]) -> tuple[bool, List[str]]:
+    """验证外部依赖是否全部在 Import Map 中配置
+
+    Args:
+        externals: 编译器返回的外部依赖列表
+
+    Returns:
+        (is_valid, missing_packages) - 是否全部有效，缺失的包列表
+    """
+    all_known = get_all_known_imports()
+    missing = [pkg for pkg in externals if pkg not in all_known]
+    return len(missing) == 0, missing
 
 
 def generate_shell_html(
     title: str,
     body_js: str,
     dependencies: Optional[List[str]] = None,
+    extra_imports: Optional[Dict[str, str]] = None,
 ) -> str:
     """生成最终的 Shell HTML，注按需注入脚本和样式
 
@@ -85,10 +118,13 @@ def generate_shell_html(
     # 动态构建 import map
     final_imports = CORE_IMPORTS.copy()
 
+    # 合并所有可用的依赖源（静态配置 + 动态解析）
+    scannable_imports = {**OPTIONAL_IMPORTS, **(extra_imports or {})}
+
     # 扫描代码特征和依赖声明
-    # 简单的启发式搜索: 检查 OPTIONAL_IMPORTS 的 key 是否出现在 body_js 中
+    # 简单的启发式搜索: 检查所有可用依赖的 key 是否出现在 body_js 中
     # 或者是否在 dependencies 列表中
-    for pkg_name, url in OPTIONAL_IMPORTS.items():
+    for pkg_name, url in scannable_imports.items():
         # 1. 显式声明
         if pkg_name in dependencies:
             final_imports[pkg_name] = url
@@ -115,7 +151,8 @@ def generate_shell_html(
 
     # 遍历已添加的包，解析其 external 依赖并补充到 import map
     added_deps = True
-    all_imports = {**CORE_IMPORTS, **OPTIONAL_IMPORTS}
+    # 合并静态配置和动态解析的依赖
+    all_imports = {**CORE_IMPORTS, **OPTIONAL_IMPORTS, **(extra_imports or {})}
     
     processed_deps = set()
     

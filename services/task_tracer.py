@@ -182,6 +182,20 @@ class TaskEvent(str, Enum):
     PRODUCER_CANCELLED = "PRODUCER_CANCELLED"
     """生产者取消 - LLM 流被取消"""
 
+    # ==================== 依赖解析 ====================
+
+    DEPENDENCY_CHECK = "DEPENDENCY_CHECK"
+    """依赖检查 - 开始检查外部依赖配置"""
+
+    DEPENDENCY_RESOLVE_START = "DEPENDENCY_RESOLVE_START"
+    """依赖解析开始 - 开始动态解析未知依赖"""
+
+    DEPENDENCY_RESOLVE_SUCCESS = "DEPENDENCY_RESOLVE_SUCCESS"
+    """依赖解析成功 - 成功解析所有未知依赖"""
+
+    DEPENDENCY_RESOLVE_FAILED = "DEPENDENCY_RESOLVE_FAILED"
+    """依赖解析失败 - 部分依赖无法解析"""
+
 
 class TaskTracer:
     """任务追踪器

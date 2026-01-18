@@ -1,12 +1,13 @@
 """编译工具
 
 提供编译验证功能。
+所有工具统一返回 ToolResult 类型，tool_name 由框架自动注入。
 """
 
 import re
-from typing import Any, Dict
 
 from ..core.context import ToolContext
+from ..core.error_feedback import ToolResult
 from ..services.compiler_client import check_project, compile_project
 from . import agent_tool
 
@@ -19,16 +20,16 @@ from . import agent_tool
         "properties": {},
     },
 )
-async def compile_project_tool(ctx: ToolContext) -> str:
-    """编译项目"""
+async def compile_project_tool(ctx: ToolContext) -> ToolResult:
+    """编译项目（动作型工具，静默成功）"""
     files = ctx.project.get_snapshot()
 
     if not files:
-        return "❌ 项目为空，无法编译"
+        return ToolResult.ok("❌ 项目为空，无法编译")
 
     # 检查入口文件
     if "src/main.tsx" not in files:
-        return "❌ 缺少入口文件 src/main.tsx"
+        return ToolResult.ok("❌ 缺少入口文件 src/main.tsx")
 
     # 记录编译事件
     if ctx.tracer:
@@ -59,7 +60,10 @@ async def compile_project_tool(ctx: ToolContext) -> str:
                 externals=externals,
             )
 
-        return f"✅ 编译成功!\n外部依赖: {', '.join(externals) if externals else '无'}"
+        return ToolResult.ok(
+            f"✅ 编译成功!\n外部依赖: {', '.join(externals) if externals else '无'}",
+        )
+
     if ctx.tracer:
         ctx.tracer.log_event(
             event_type=ctx.tracer.EVENT.COMPILE_FAILED,
@@ -72,7 +76,7 @@ async def compile_project_tool(ctx: ToolContext) -> str:
     enhanced_error = enhance_compile_error(output, ctx)
     ctx.state.last_error = enhanced_error
 
-    return f"❌ 编译失败:\n{enhanced_error}"
+    return ToolResult.ok(f"❌ 编译失败:\n{enhanced_error}")
 
 
 @agent_tool(
@@ -83,12 +87,12 @@ async def compile_project_tool(ctx: ToolContext) -> str:
         "properties": {},
     },
 )
-async def type_check(ctx: ToolContext) -> str:
-    """类型检查"""
+async def type_check(ctx: ToolContext) -> ToolResult:
+    """类型检查（动作型工具，静默成功）"""
     files = ctx.project.get_snapshot()
 
     if not files:
-        return "❌ 项目为空"
+        return ToolResult.ok("❌ 项目为空")
 
     error = await check_project(
         files=files,
@@ -97,9 +101,9 @@ async def type_check(ctx: ToolContext) -> str:
     )
 
     if error:
-        return f"❌ 类型检查失败:\n{error}"
+        return ToolResult.ok(f"❌ 类型检查失败:\n{error}")
 
-    return "✅ 类型检查通过"
+    return ToolResult.ok("✅ 类型检查通过")
 
 
 def enhance_compile_error(error_msg: str, ctx: ToolContext) -> str:
@@ -114,7 +118,8 @@ def enhance_compile_error(error_msg: str, ctx: ToolContext) -> str:
     # 处理 "File not found" 错误 - 最常见的问题
     if "File not found" in error_msg or "Could not resolve" in error_msg:
         match = re.search(
-            r'(?:File not found in VFS|Could not resolve)[:\s]*"?([^"\s]+)"?', error_msg,
+            r'(?:File not found in VFS|Could not resolve)[:\s]*"?([^"\s]+)"?',
+            error_msg,
         )
         if match:
             missing_file = match.group(1)

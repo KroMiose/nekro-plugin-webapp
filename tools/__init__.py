@@ -113,7 +113,7 @@ async def execute_tool_safe(
 ) -> "ToolResult":
     """执行工具调用（返回结构化结果）
 
-    新版本工具执行函数，返回 ToolResult 提供更丰富的错误信息。
+    框架层自动注入 tool_name，工具函数无需关心。
 
     Args:
         name: 工具名称
@@ -127,40 +127,47 @@ async def execute_tool_safe(
 
     tool = get_tool(name)
     if not tool:
-        return ToolResult.error(
+        result = ToolResult.error(
             message=f"Tool '{name}' not found",
             error_type=ErrorType.TOOL_NOT_FOUND,
-            tool_name=name,
             context={"available_tools": list(_TOOL_REGISTRY.keys())},
         )
+        result.tool_name = name
+        return result
 
     try:
         result = await tool.handler(ctx, **arguments)
 
-        # 如果工具返回 ToolResult，直接使用
+        # 如果工具返回 ToolResult，使用它
         if isinstance(result, ToolResult):
-            result.tool_name = name
+            result.tool_name = name  # 框架自动注入 tool_name
             return result
 
         # 否则将字符串结果包装为成功的 ToolResult
-        return ToolResult.ok(message=str(result), tool_name=name)
+        wrapped = ToolResult.ok(message=str(result))
+        wrapped.tool_name = name
 
     except TypeError as e:
         # 参数类型错误
-        return ToolResult.error(
+        result = ToolResult.error(
             message=f"Invalid arguments: {e}",
             error_type=ErrorType.TOOL_INVALID_ARGS,
-            tool_name=name,
             context={"provided_args": list(arguments.keys())},
         )
+        result.tool_name = name
+        return result
     except Exception as e:
         # 其他执行错误
-        return ToolResult.error(
+        result = ToolResult.error(
             message=f"Execution failed: {e}",
             error_type=ErrorType.INTERNAL_ERROR,
-            tool_name=name,
             recoverable=False,
         )
+        result.tool_name = name
+        return result
+
+    else:
+        return wrapped
 
 
 # ==================== 自动注册 ====================
